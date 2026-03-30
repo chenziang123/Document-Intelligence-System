@@ -106,7 +106,7 @@ class CLIInterface:
                         print("  select data [编号]    - 选择文件")
                         continue
                     response = self._process_input(user_input)
-                    if not self.config.llm.streaming:
+                    if response.strip():
                         print(f"\n[系统]: {strip_markdown(response)}")
 
                 elif self.current_task_type == TaskType.ENTITY_EXTRACTION:
@@ -115,7 +115,7 @@ class CLIInterface:
                         print("\n请先选择文档文件!")
                         continue
                     response = self._process_input(user_input)
-                    if not self.config.llm.streaming:
+                    if response.strip():
                         print(f"\n[系统]: {strip_markdown(response)}")
 
                 elif self.current_task_type == TaskType.TABLE_FILLING:
@@ -124,7 +124,7 @@ class CLIInterface:
                         print("\n请先选择数据文件!")
                         continue
                     response = self._process_input(user_input)
-                    if not self.config.llm.streaming:
+                    if response.strip():
                         print(f"\n[系统]: {strip_markdown(response)}")
 
                 else:
@@ -608,6 +608,9 @@ class CLIInterface:
         task_type = mode_map.get(mode.lower())
         if task_type:
             self.current_task_type = task_type
+            # 同步到 InputHandler 会话状态，避免后续解析回落到默认对话
+            session_state = self.input_handler.session_manager.get_session(self.input_handler.session_id)
+            session_state.task_type = task_type
             print(f"\n已选择模式: {task_type.value}")
             print(f"  {self._get_mode_requirements(task_type)}")
 
@@ -680,25 +683,27 @@ class CLIInterface:
                 return False, "请先选择原数据文件"
 
             # 检查文件类型
+            selected_type = self.selected_files[0].file_type.value.lower()
             allowed_types = {
-                TaskType.DOCUMENT_EDITING: ["DOCX"],
-                TaskType.ENTITY_EXTRACTION: ["DOCX", "PDF", "TXT", "MD"],
-                TaskType.TABLE_FILLING: ["XLSX", "XLS"],
+                TaskType.DOCUMENT_EDITING: ["DOCX", "docx"],
+                TaskType.ENTITY_EXTRACTION: ["DOCX", "docx", "PDF", "pdf", "TXT", "txt", "MD", "md"],
+                TaskType.TABLE_FILLING: ["XLSX", "xlsx", "XLS", "xls"],
             }
-            if self.selected_files[0].file_type.value not in allowed_types.get(task_type, []):
-                return False, f"该模式不支持 {self.selected_files[0].file_type.value} 格式"
+            if selected_type not in allowed_types.get(task_type, []):
+                return False, f"该模式不支持 {selected_type} 格式"
 
         # 检查模板
         if task_type in [TaskType.ENTITY_EXTRACTION, TaskType.TABLE_FILLING]:
             if not self.template_file:
                 return False, "请先上传模板文件"
 
+            template_type = self.template_file.file_type.value.lower()
             template_types = {
-                TaskType.ENTITY_EXTRACTION: ["XLSX", "XLS"],
-                TaskType.TABLE_FILLING: ["XLSX", "XLS", "DOCX"],
+                TaskType.ENTITY_EXTRACTION: ["XLSX", "xlsx", "XLS", "xls"],
+                TaskType.TABLE_FILLING: ["XLSX", "xlsx", "XLS", "xls", "DOCX", "docx"],
             }
-            if self.template_file.file_type.value not in template_types.get(task_type, []):
-                return False, f"该模式不支持 {self.template_file.file_type.value} 格式的模板"
+            if template_type not in template_types.get(task_type, []):
+                return False, f"该模式不支持 {template_type} 格式的模板"
 
         return True, "文件验证通过"
 
@@ -723,8 +728,15 @@ class CLIInterface:
         if session_state.data_files:
             self.uploaded_files = session_state.data_files
 
-        # 确定任务类型
-        task_type = task_spec.task_type
+        # 确定任务类型：优先使用 CLI 显式选择的模式
+        if self.current_task_type is not None:
+            task_type = self.current_task_type
+        else:
+            # 未显式选模式时，基于当前选中文件自动检测
+            all_files = self.selected_files.copy()
+            if self.template_file:
+                all_files.append(self.template_file)
+            task_type = detect_task_type_from_files(all_files) if all_files else task_spec.task_type
 
         # 验证文件是否满足要求
         valid, msg = self._validate_mode_files(task_type)

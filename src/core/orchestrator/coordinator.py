@@ -5,6 +5,8 @@
 from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass
 import json
+from datetime import datetime
+from pathlib import Path
 
 from .task_spec import TaskSpec, TaskType, FileInfo
 from .executor import TaskExecutor
@@ -13,6 +15,7 @@ from db.workflow_persistence import (
     persist_workflow_execute_begin,
     persist_workflow_execute_end,
 )
+from output.result_handler import ResultHandler
 from utils.logger import get_logger
 
 
@@ -39,6 +42,7 @@ class WorkflowCoordinator:
         self.config = config or get_config()
         self.logger = get_logger(__name__)
         self.executor = TaskExecutor(self.config)
+        self.result_handler = ResultHandler(self.config.output_dir)
         self._workflow_handlers: Dict[TaskType, Callable] = {}
         self._register_workflows()
         # 保存 DocumentAgent 实例供交互式对话使用
@@ -187,6 +191,24 @@ class WorkflowCoordinator:
             task_spec=task_spec
         )
 
+        if not extracted_data or not getattr(extracted_data, "success", False):
+            err_msg = getattr(extracted_data, "message", "实体提取失败")
+            return WorkflowResult(success=False, message=err_msg, data=extracted_data)
+
+        output_filename = (
+            Path(task_spec.output_file).name
+            if task_spec.output_file
+            else f"entity_extraction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        saved_path = self.result_handler.save_json(
+            data=getattr(extracted_data, "data", {}),
+            filename=output_filename,
+        )
+        if saved_path:
+            extracted_data.metadata = extracted_data.metadata or {}
+            extracted_data.metadata["saved_path"] = saved_path
+            extracted_data.message = f"{extracted_data.message}，结果已保存到: {saved_path}"
+
         # 3. 填入模板
         if task_spec.template_file:
             filled_template = self.executor.fill_template(
@@ -198,13 +220,14 @@ class WorkflowCoordinator:
                 success=True,
                 message="实体提取完成",
                 data=extracted_data,
-                output_file=task_spec.output_file
+                output_file=saved_path or task_spec.output_file
             )
 
         return WorkflowResult(
             success=True,
             message="实体提取完成",
-            data=extracted_data
+            data=extracted_data,
+            output_file=saved_path or task_spec.output_file,
         )
 
     def _table_filling_flow(self, task_spec: TaskSpec) -> WorkflowResult:

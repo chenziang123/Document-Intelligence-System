@@ -95,6 +95,31 @@ class PdfReader(DocumentReader):
             return f"Error reading PDF: {str(e)}"
 
 
+class MdReader(DocumentReader):
+    """Markdown document reader implementation"""
+
+    def read(self, file_path: str) -> str:
+        """Read and extract text from Markdown file with encoding handling"""
+        logger.info(f"开始读取Markdown文件: {file_path}")
+        encodings = ["utf-8", "gbk", "gb2312", "latin-1"]
+
+        for i, encoding in enumerate(encodings):
+            try:
+                with open(file_path, "r", encoding=encoding) as f:
+                    text = f.read()
+                logger.info(f"Markdown文件读取成功: {file_path}, 使用编码: {encoding}, 字符数: {len(text)}")
+                return text if text else "No text found in the Markdown file."
+            except UnicodeDecodeError:
+                logger.debug(f"编码 {encoding} 尝试失败，尝试下一个...")
+                continue
+            except Exception as e:
+                logger.error(f"读取Markdown文件失败: {file_path}, 错误: {str(e)}")
+                return f"Error reading Markdown: {str(e)}"
+
+        logger.error(f"无法解码Markdown文件: {file_path}, 所有编码都失败")
+        return "Error reading Markdown: Could not decode file with any supported encoding."
+
+
 class TxtReader(DocumentReader):
     """TXT document reader implementation"""
 
@@ -444,6 +469,7 @@ class DocumentReaderFactory:
 
     _readers: dict[str, type[DocumentReader]] = {
         ".txt": TxtReader,
+        ".md": MdReader,
         ".docx": DocxReader,
         ".pdf": PdfReader,
         ".xlsx": ExcelReader,

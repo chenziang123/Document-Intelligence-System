@@ -3,9 +3,12 @@
 """
 import os
 import shutil
+import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import hashlib
+
+import openpyxl
 
 
 class FileUtils:
@@ -199,3 +202,43 @@ class FileUtils:
                 FileUtils.delete_file(file_path)
             except Exception:
                 pass
+
+
+def split_text_semantic_with_offset(text: str, max_size: int) -> List[Tuple[str, int]]:
+    """按语义分块并保留每个分块在原文中的起始偏移。"""
+    sentences = re.split(r'([。！？\n])', text)
+    chunks: List[Tuple[str, int]] = []
+    current = ""
+    idx = 0
+    chunk_start = 0
+
+    for i in range(0, len(sentences), 2):
+        sentence = sentences[i]
+        sep = sentences[i + 1] if i + 1 < len(sentences) else ""
+        seg = sentence + sep
+
+        if len(current) + len(seg) < max_size:
+            if not current:
+                chunk_start = idx
+            current += seg
+        else:
+            if current:
+                chunks.append((current, chunk_start))
+            current = seg
+            chunk_start = idx
+
+        idx += len(seg)
+
+    if current:
+        chunks.append((current, chunk_start))
+
+    return chunks
+
+
+def read_excel_template_columns(template_path: str) -> List[str]:
+    """读取 Excel 模板第一行，返回非空列名列表。"""
+    workbook = openpyxl.load_workbook(template_path)
+    worksheet = workbook.active
+    columns = [str(cell.value).strip() for cell in worksheet[1] if cell.value and str(cell.value).strip()]
+    workbook.close()
+    return columns

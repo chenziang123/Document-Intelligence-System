@@ -44,6 +44,22 @@ class TaskExecutor:
         """清除文件缓存"""
         self._file_cache.clear()
 
+    def parse_documents(self, source_files: List[FileInfo]) -> Dict[str, str]:
+        """解析源文档，返回 file_path -> text 映射。"""
+        from utils.document_reader import read_document
+
+        parsed_content: Dict[str, str] = {}
+        for file_info in source_files:
+            if file_info.path in self._file_cache:
+                parsed_content[file_info.path] = self._file_cache[file_info.path]
+                continue
+
+            content = read_document(file_info.path)
+            parsed_content[file_info.path] = content
+            self._file_cache[file_info.path] = content
+
+        return parsed_content
+
     def execute_agent(
         self,
         agent_name: str,
