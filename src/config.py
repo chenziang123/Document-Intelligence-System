@@ -6,6 +6,24 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
+
+def _load_project_env() -> None:
+    """加载项目根目录 .env（幂等），保证任意入口都能读取环境变量。"""
+    if load_dotenv is None:
+        return
+
+    root_env = Path(__file__).resolve().parent.parent / ".env"
+    if root_env.exists():
+        load_dotenv(root_env)
+
+
+_load_project_env()
+
 
 @dataclass
 class LLMConfig:

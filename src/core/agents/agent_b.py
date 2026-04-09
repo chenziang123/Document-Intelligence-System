@@ -83,27 +83,18 @@ class AgentB(BaseAgent):
         )
 
     def _init_extraction_model(self):
-        """初始化 langextract 模型，支持 zhipu/deepseek 自动切换。"""
+        """初始化 langextract 模型，使用 DeepSeek。"""
         try:
             from langextract import factory
-            from core.llm.providers import deepseek_provider, zhipu_provider  # noqa: F401
+            from core.llm.providers import deepseek_provider  # noqa: F401
         except Exception as exc:
             self.logger.error(f"langextract 初始化失败: {exc}")
             return None
 
-        provider_raw = (self.config.llm.provider or "deepseek").lower()
+        # 统一使用 DeepSeek
         provider_name = "DeepSeekLanguageModel"
-        if "zhipu" in provider_raw or provider_raw.startswith("glm"):
-            provider_name = "ZhipuLanguageModel"
-
-        model_id = self.config.llm.model
-        if provider_name == "ZhipuLanguageModel" and model_id == "deepseek-chat":
-            model_id = os.getenv("ZHIPU_MODEL", "glm-4-flash")
-
-        if provider_name == "DeepSeekLanguageModel":
-            api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
-        else:
-            api_key = os.getenv("ZHIPU_API_KEY") or self.config.llm.api_key
+        model_id = self.config.llm.model or "deepseek-chat"
+        api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
 
         if not api_key:
             self.logger.warning("未检测到提取模型 API Key，后续将回退到规则抽取")

@@ -6,6 +6,7 @@ import re
 from typing import Optional, List, Tuple
 import sys
 import os
+from pathlib import Path
 
 from config import SystemConfig
 from core.orchestrator import WorkflowCoordinator, TaskSpec, TaskType, FileInfo
@@ -163,7 +164,7 @@ class CLIInterface:
         self._document_agent_instance = result.interactive_agent
 
         # 只在第一次初始化时打印
-        print(f"\n✓ DocumentAgent 已就绪")
+        print(f"\n[OK] DocumentAgent 已就绪")
         if self.selected_files:
             print(f"  已选中文档 ({len(self.selected_files)} 个):")
             for f in self.selected_files:
@@ -398,14 +399,14 @@ class CLIInterface:
         if result.success:
             # 添加到已上传文件池
             self.uploaded_files.append(result.file_info)
-            print(f"\n✓ 原数据上传成功!")
+            print(f"\n[OK] 原数据上传成功!")
             print(f"  文件名: {result.file_info.name}")
             print(f"  类型: {result.file_info.file_type.value}")
             print(f"  大小: {result.file_info.size / 1024:.2f} KB")
             print(f"  当前已上传 {len(self.uploaded_files)} 个文件")
             print(f"\n  使用 'select data [编号]' 选择文件给 Agent 使用")
         else:
-            print(f"\n✗ 上传失败: {result.message}")
+            print(f"\n[ERR] 上传失败: {result.message}")
 
     def _upload_template_file(self, file_path: str):
         """上传模板文件"""
@@ -416,12 +417,12 @@ class CLIInterface:
         result = self.file_uploader.upload(file_path)
         if result.success:
             self.template_file = result.file_info
-            print(f"\n✓ 模板上传成功!")
+            print(f"\n[OK] 模板上传成功!")
             print(f"  文件名: {result.file_info.name}")
             print(f"  类型: {result.file_info.file_type.value}")
             print(f"  大小: {result.file_info.size / 1024:.2f} KB")
         else:
-            print(f"\n✗ 上传失败: {result.message}")
+            print(f"\n[ERR] 上传失败: {result.message}")
 
     def _add_source_file(self, file_path: str):
         """添加额外的源文件"""
@@ -437,11 +438,11 @@ class CLIInterface:
         result = self.file_uploader.upload(file_path)
         if result.success:
             self.uploaded_files.append(result.file_info)
-            print(f"\n✓ 已添加文件: {result.file_info.name}")
+            print(f"\n[OK] 已添加文件: {result.file_info.name}")
             print(f"  当前已上传 {len(self.uploaded_files)} 个文件")
             print(f"  使用 'select data [编号]' 选择文件")
         else:
-            print(f"\n✗ 添加失败: {result.message}")
+            print(f"\n[ERR] 添加失败: {result.message}")
 
     def _show_uploaded_files(self):
         """显示已上传的文件"""
@@ -452,7 +453,7 @@ class CLIInterface:
         if self.uploaded_files:
             print(f"上传列表 ({len(self.uploaded_files)} 个):")
             for i, f in enumerate(self.uploaded_files, 1):
-                selected_mark = " ✓" if f in self.selected_files else ""
+                selected_mark = " [OK]" if f in self.selected_files else ""
                 print(f"  {i}. {f.name} [{f.file_type.value}]{selected_mark}")
         else:
             print("原数据: (未上传)")
@@ -489,7 +490,7 @@ class CLIInterface:
             print("  (无已上传文件)")
         else:
             for i, f in enumerate(self.uploaded_files, 1):
-                selected_mark = " ✓" if f in self.selected_files else ""
+                selected_mark = " [OK]" if f in self.selected_files else ""
                 print(f"  {i}. {f.name} [{f.file_type.value}]{selected_mark}")
                 print(f"     {f.path}")
 
@@ -514,7 +515,7 @@ class CLIInterface:
                 # 添加到选中列表
                 if selected not in self.selected_files:
                     self.selected_files.append(selected)
-                print(f"\n✓ 已选择: {selected.name}")
+                print(f"\n[OK] 已选择: {selected.name}")
                 # 如果在文档理解模式，更新 Agent
                 if self.current_task_type == TaskType.DOCUMENT_UNDERSTANDING and self._document_agent_instance:
                     self._document_agent_instance.set_documents(self.selected_files)
@@ -554,7 +555,7 @@ class CLIInterface:
             print("  upload template <路径>")
             return
 
-        print(f"\n✓ 已选择模板文件: {self.template_file.name}")
+        print(f"\n[OK] 已选择模板文件: {self.template_file.name}")
         print(f"  路径: {self.template_file.path}")
 
     def _get_mode_requirements(self, task_type: TaskType) -> str:
@@ -586,9 +587,11 @@ class CLIInterface:
 
         print("\n使用方式:")
         print("  1. 选择模式: select <模式名或数字>")
-        print("  2. 上传原数据: upload data <文件路径>")
-        print("  3. 上传模板: upload template <文件路径>")
-        print("  4. 执行任务: 输入您的需求或任务描述")
+        print("  2. 文档编辑: select agent_a")
+        print("  3. 表格填表: select agent_d")
+        print("  4. 上传原数据: upload data <文件路径>")
+        print("  5. 上传模板: upload template <文件路径>")
+        print("  6. 执行任务: 输入您的需求或任务描述")
 
     def _select_workflow_mode(self, mode: str):
         """选择工作模式"""
@@ -601,8 +604,12 @@ class CLIInterface:
             "default": TaskType.DEFAULT_CONVERSATION,
             "document_understanding": TaskType.DOCUMENT_UNDERSTANDING,
             "document_editing": TaskType.DOCUMENT_EDITING,
+            "agent_a": TaskType.DOCUMENT_EDITING,
+            "agent a": TaskType.DOCUMENT_EDITING,
             "entity_extraction": TaskType.ENTITY_EXTRACTION,
             "table_filling": TaskType.TABLE_FILLING,
+            "agent_d": TaskType.TABLE_FILLING,
+            "agent d": TaskType.TABLE_FILLING,
         }
 
         task_type = mode_map.get(mode.lower())
@@ -621,7 +628,7 @@ class CLIInterface:
             if task_type == TaskType.DOCUMENT_UNDERSTANDING:
                 print("\n已就绪！现在可以:")
                 if self.selected_files:
-                    print(f"  ✓ 已选中文档 {len(self.selected_files)} 个，可直接对话")
+                    print(f"  [OK] 已选中文档 {len(self.selected_files)} 个，可直接对话")
                 elif self.uploaded_files:
                     print(f"  已上传 {len(self.uploaded_files)} 个文件")
                     print("  使用 'select data [编号]' 选择文件")
@@ -638,7 +645,7 @@ class CLIInterface:
         # 文档理解模式不需要文件，可直接进入
         if task_type == TaskType.DOCUMENT_UNDERSTANDING:
             if self.selected_files:
-                print(f"  ✓ 已选中文档 {len(self.selected_files)} 个")
+                print(f"  [OK] 已选中文档 {len(self.selected_files)} 个")
             elif self.uploaded_files:
                 print(f"  已上传 {len(self.uploaded_files)} 个，请先 select")
                 print("  upload data → select data → 对话")
@@ -658,14 +665,14 @@ class CLIInterface:
                 issues.append("模板文件未上传")
 
         if issues:
-            print("\n⚠ 文件要求:")
+            print("\n[WARN] 文件要求:")
             for issue in issues:
                 print(f"  - {issue}")
             print("\n请使用以下命令:")
             print("  upload data <路径>     - 上传文件")
             print("  select data [编号]      - 选择文件")
         else:
-            print("\n✓ 文件已准备就绪，可以开始执行任务")
+            print("\n[OK] 文件已准备就绪，可以开始执行任务")
 
     def _validate_mode_files(self, task_type: TaskType) -> Tuple[bool, str]:
         """验证当前模式的文件是否满足要求"""
@@ -707,6 +714,40 @@ class CLIInterface:
 
         return True, "文件验证通过"
 
+    def _apply_default_output_paths(self, task_spec: TaskSpec, task_type: TaskType, source_files: List[FileInfo]):
+        """为 CLI 执行补齐默认输出路径，保存在源文件同目录。"""
+        if task_spec.output_file or not source_files:
+            return
+
+        source_path = Path(source_files[0].path).resolve()
+        base_dir = source_path.parent
+        stem = source_path.stem
+
+        if task_type == TaskType.DOCUMENT_EDITING:
+            task_spec.output_file = str(base_dir / f"{stem}_edited{source_path.suffix}")
+            return
+
+        if task_type == TaskType.ENTITY_EXTRACTION:
+            task_spec.output_file = str(base_dir / f"{stem}_extracted.json")
+            task_spec.parameters["allow_rule_fallback"] = True
+            if task_spec.template_file:
+                template_suffix = Path(task_spec.template_file.path).suffix.lower() or ".xlsx"
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(base_dir / f"{stem}_filled{template_suffix}"),
+                )
+            return
+
+        if task_type == TaskType.TABLE_FILLING:
+            task_spec.output_file = str(base_dir / f"{stem}_filtered.json")
+            task_spec.parameters["allow_rule_fallback"] = True
+            if task_spec.template_file:
+                template_suffix = Path(task_spec.template_file.path).suffix.lower() or ".xlsx"
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(base_dir / f"{stem}_filled{template_suffix}"),
+                )
+
     def _process_input(self, user_input: str) -> str:
         """
         处理用户输入
@@ -741,7 +782,7 @@ class CLIInterface:
         # 验证文件是否满足要求
         valid, msg = self._validate_mode_files(task_type)
         if not valid:
-            return f"⚠ {msg}\n\n请先上传并选择所需文件。"
+            return f"[WARN] {msg}\n\n请先上传并选择所需文件。"
         if task_type == TaskType.DOCUMENT_UNDERSTANDING:
             # 文档理解模式：使用选中的文件或空列表
             source_to_use = self.selected_files
@@ -755,8 +796,10 @@ class CLIInterface:
             instruction=task_spec.instruction,
             source_files=source_to_use,
             template_file=self.template_file,
+            parameters=dict(task_spec.parameters or {}),
             conversation_history=self.conversation_history
         )
+        self._apply_default_output_paths(final_spec, task_type, source_to_use)
 
         # 添加到对话历史
         self.conversation_history.append({"role": "user", "content": user_input})

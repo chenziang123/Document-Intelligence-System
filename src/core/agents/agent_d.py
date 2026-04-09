@@ -102,6 +102,10 @@ class AgentB(BaseAgent):
         if not rows:
             return AgentResponse(success=False, message="Excel中未读取到可用数据行")
 
+        source_path = Path(excel_path).resolve()
+        source_dir = source_path.parent
+        default_json_output = str(source_dir / f"{source_path.stem}_filtered_rows.json")
+
         # 多表模式：每个目标独立筛选并写入对应表区
         if table_targets and task_spec.template_file and self._is_supported_template(task_spec.template_file.path):
             template_path = task_spec.template_file.path
@@ -155,19 +159,27 @@ class AgentB(BaseAgent):
                 })
 
             if self._is_excel_template(template_path):
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.xlsx'}"),
+                )
                 template_output_path = self._fill_excel_template_multi(
                     template_path=template_path,
                     target_results=target_results,
                     parameters=task_spec.parameters,
                 )
             else:
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.docx'}"),
+                )
                 template_output_path = self._fill_docx_template_multi(
                     template_path=template_path,
                     target_results=target_results,
                     parameters=task_spec.parameters,
                 )
 
-            output_path = self._write_rows_to_json(union_rows, task_spec.output_file)
+            output_path = self._write_rows_to_json(union_rows, task_spec.output_file or default_json_output)
 
             return AgentResponse(
                 success=True,
@@ -217,7 +229,7 @@ class AgentB(BaseAgent):
             )
 
         filtered_rows = self._apply_filter_plan(rows, plan)
-        output_path = self._write_rows_to_json(filtered_rows, task_spec.output_file)
+        output_path = self._write_rows_to_json(filtered_rows, task_spec.output_file or default_json_output)
 
         template_output_path = None
         column_mapping: Dict[str, str] = {}
@@ -231,6 +243,10 @@ class AgentB(BaseAgent):
                 parameters=task_spec.parameters,
             )
             if self._is_excel_template(template_path):
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.xlsx'}"),
+                )
                 template_output_path = self._fill_excel_template(
                     filtered_rows=filtered_rows,
                     template_path=template_path,
@@ -238,6 +254,10 @@ class AgentB(BaseAgent):
                     parameters=task_spec.parameters,
                 )
             else:
+                task_spec.parameters.setdefault(
+                    "template_output_file",
+                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.docx'}"),
+                )
                 template_output_path = self._fill_docx_template(
                     filtered_rows=filtered_rows,
                     template_path=template_path,
@@ -1653,7 +1673,7 @@ def run_agent_d_api(
     if output_json:
         resolved_output_json = Path(str(output_json)).resolve()
     else:
-        resolved_output_json = root / "tests" / "test_b" / "data" / "filtered_rows.json"
+        resolved_output_json = excel_path.parent / f"{excel_path.stem}_filtered_rows.json"
 
     template_file = None
     if template:
