@@ -39,14 +39,20 @@ function formatSize(bytes) {
 function getFileTypeTag(type) {
   const ext = type.split('.').pop().toLowerCase()
   const map = {
-    pdf: 'error',
-    doc: 'warning',
-    docx: 'warning',
-    xls: 'info',
-    xlsx: 'info',
-    txt: 'default',
+    pdf:  { tag: 'error',   label: 'PDF' },
+    doc:  { tag: 'info',   label: 'DOC' },
+    docx: { tag: 'info',   label: 'DOCX' },
+    xls:  { tag: 'success', label: 'XLS' },
+    xlsx: { tag: 'success', label: 'XLSX' },
+    txt:  { tag: 'default', label: 'TXT' },
+    md:   { tag: 'default', label: 'MD' },
+    csv:  { tag: 'warning', label: 'CSV' },
+    png:  { tag: 'info',   label: 'PNG' },
+    jpg:  { tag: 'info',   label: 'JPG' },
+    jpeg: { tag: 'info',   label: 'JPEG' },
   }
-  return map[ext] || 'default'
+  const item = map[ext]
+  return item ? { tag: item.tag, label: item.label } : { tag: 'default', label: ext.toUpperCase() }
 }
 
 async function handleUpload(file, fileType) {
@@ -113,7 +119,7 @@ async function handleUpload(file, fileType) {
               class="w-4 h-4 text-green-600 rounded focus:ring-green-500"
             />
             <span class="truncate max-w-32">{{ file.file_name }}</span>
-            <n-tag :type="getFileTypeTag(file.file_name)" size="tiny">{{ file.file_name.split('.').pop().toUpperCase() }}</n-tag>
+            <n-tag :type="getFileTypeTag(file.file_name).tag" size="tiny">{{ getFileTypeTag(file.file_name).label }}</n-tag>
             <span class="text-xs text-gray-400">{{ formatSize(file.file_size) }}</span>
             <button
               @click="sessionStore.deleteFile(file.id, 'data')"
@@ -162,7 +168,7 @@ async function handleUpload(file, fileType) {
                 class="w-4 h-4 text-green-600 rounded focus:ring-green-500"
               />
               <span class="truncate max-w-32">{{ file.file_name }}</span>
-              <n-tag :type="getFileTypeTag(file.file_name)" size="tiny">{{ file.file_name.split('.').pop().toUpperCase() }}</n-tag>
+              <n-tag :type="getFileTypeTag(file.file_name).tag" size="tiny">{{ getFileTypeTag(file.file_name).label }}</n-tag>
               <span class="text-xs text-gray-400">{{ formatSize(file.file_size) }}</span>
               <button
                 @click="sessionStore.deleteFile(file.id, 'template')"

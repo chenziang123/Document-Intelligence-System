@@ -58,7 +58,7 @@ class WorkflowCoordinator:
             TaskType.TABLE_FILLING: self._table_filling_flow,
         }
 
-    def execute(self, task_spec: TaskSpec) -> WorkflowResult:
+    def execute(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
         执行工作流
         根据任务规格选择对应的工作流并执行
@@ -80,7 +80,7 @@ class WorkflowCoordinator:
             return WorkflowResult(success=False, message=msg)
 
         try:
-            result = handler(task_spec)
+            result = handler(task_spec, progress_callback=progress_callback)
             persist_workflow_execute_end(
                 task_spec, result.success, result.message, self.config
             )
@@ -169,7 +169,7 @@ class WorkflowCoordinator:
             output_file=task_spec.output_file
         )
 
-    def _entity_extraction_flow(self, task_spec: TaskSpec) -> WorkflowResult:
+    def _entity_extraction_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
         实体提取模式
         1. 解析文档
@@ -179,14 +179,19 @@ class WorkflowCoordinator:
         """
         self.logger.info("进入实体提取模式")
 
+        # 文档解析完毕后立即通知前端，让用户知道任务已启动
+        if progress_callback:
+            progress_callback(0, 1, "文档解析完成，开始提取...")
+
         # 1. 解析非结构化文档
         parsed_content = self.executor.parse_documents(task_spec.source_files)
 
-        # 2. Agent_B 提取实体
+        # 2. Agent_B 提取实体（带进度回调）
         task_spec.parameters["parsed_content"] = parsed_content
         extracted_data = self.executor.execute_agent(
             agent_name="agent_b",
-            task_spec=task_spec
+            task_spec=task_spec,
+            progress_callback=progress_callback,
         )
 
         if not extracted_data or not getattr(extracted_data, "success", False):

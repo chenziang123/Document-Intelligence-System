@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import queue
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -192,9 +194,27 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             # 这样用户可以随时切换勾选，文件跟随消息
             client_files = data.get("files") or []
             client_templates = data.get("template_files") or []
-            
-            # 如果前端没传文件（向后兼容），从数据库读取
-            if client_files or client_templates:
+
+            # 实体提取模式：必须使用数据库中的真实 file_path
+            # 因为前端发送的文件可能没有 file_path
+            if mode == "entity_extraction":
+                db_data_files, db_template_files = get_selected_session_files_payload(session_id, cfg)
+                # 合并：使用前端传来的勾选状态，用数据库中的 file_path
+                if client_files:
+                    # 构建 file_name -> file_path 映射
+                    db_path_map = {f.get('file_name'): f.get('file_path') for f in db_data_files}
+                    for cf in client_files:
+                        if not cf.get('file_path') and cf.get('file_name') in db_path_map:
+                            cf['file_path'] = db_path_map[cf['file_name']]
+                if client_templates:
+                    db_tpl_path_map = {f.get('file_name'): f.get('file_path') for f in db_template_files}
+                    for ct in client_templates:
+                        if not ct.get('file_path') and ct.get('file_name') in db_tpl_path_map:
+                            ct['file_path'] = db_tpl_path_map[ct['file_name']]
+                # 始终以数据库路径为准（最可靠）
+                files = db_data_files if db_data_files else client_files
+                template_files = db_template_files if db_template_files else client_templates
+            elif client_files or client_templates:
                 files = client_files
                 template_files = client_templates
             else:
@@ -211,25 +231,61 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             
             # 发送开始信号
             await manager.send_json(session_id, {"type": "start"})
-            
-            # 流式调用 Agent 服务（传递文件信息）
+
+            # 进度队列：线程安全信令，规避 run_coroutine_threadsafe 在主 loop 阻塞时无法执行的问题
+            progress_queue: queue.Queue = queue.Queue()
+
+            def progress_callback(completed: int, total: int, message: str):
+                percent = int(completed / total * 100) if total > 0 else 0
+                progress_queue.put_nowait({
+                    "type": "progress",
+                    "progress": percent,
+                    "message": message,
+                })
+
+            # 在后台线程跑提取，主 loop 保持空闲以处理 WebSocket
             agent_service = AgentService()
             full_response = ""
-            
-            async for chunk in agent_service.chat_stream(
-                session_id, 
-                user_content, 
-                mode,
-                files=files,
-                template_files=template_files,
-            ):
-                full_response += chunk
-                await manager.send_json(session_id, {"type": "chunk", "content": chunk})
-            
-            # 保存 AI 回复
+
+            async def drain_queue():
+                """每 50ms 把队列中的进度消息发往 WebSocket"""
+                while not progress_queue.empty():
+                    try:
+                        msg = progress_queue.get_nowait()
+                        # _done 标记仅用于退出循环，不发往 WebSocket
+                        if msg.get("_done"):
+                            continue
+                        await manager.send_json(session_id, msg)
+                    except queue.Empty:
+                        break
+
+            async def extraction_task():
+                nonlocal full_response
+                try:
+                    async for chunk in agent_service.chat_stream(
+                        session_id,
+                        user_content,
+                        mode,
+                        files=files,
+                        template_files=template_files,
+                        progress_callback=progress_callback if mode == "entity_extraction" else None,
+                    ):
+                        full_response += chunk
+                        if mode == "entity_extraction":
+                            await manager.send_json(session_id, {"type": "chunk", "content": chunk, "result_type": "entity_extraction"})
+                        else:
+                            await manager.send_json(session_id, {"type": "chunk", "content": chunk})
+                finally:
+                    progress_queue.put_nowait({"_done": True})
+
+            # 并发：提取跑后台 + 主 loop 轮询进度队列
+            ext_task = asyncio.create_task(extraction_task())
+            while not ext_task.done():
+                await drain_queue()
+                await asyncio.sleep(0.05)
+            await drain_queue()
+
             add_message(session_id, "assistant", full_response, {"mode": mode}, config=cfg)
-            
-            # 发送完成信号，通知前端可以发送下一条消息
             await manager.send_json(session_id, {"type": "done"})
             
     except WebSocketDisconnect:

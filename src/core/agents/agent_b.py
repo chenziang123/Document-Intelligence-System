@@ -2,6 +2,7 @@
 Agent_B: 实体提取Agent
 负责从非结构化文档中提取数据为JSON格式
 """
+import asyncio
 import json
 import os
 import re
@@ -33,7 +34,7 @@ class AgentB(BaseAgent):
         self.logger = get_logger(__name__)
         self.model = self._init_extraction_model()
 
-    def execute(self, task_spec: TaskSpec, **kwargs) -> AgentResponse:
+    def execute(self, task_spec: TaskSpec, progress_callback=None, **kwargs) -> AgentResponse:
         """
         执行实体提取任务
         """
@@ -43,14 +44,14 @@ class AgentB(BaseAgent):
             return AgentResponse(success=False, message=error_msg)
 
         try:
-            return self._extract_entities(task_spec)
+            return self._extract_entities(task_spec, progress_callback=progress_callback)
         except Exception as e:
             return AgentResponse(
                 success=False,
                 message=f"提取失败: {str(e)}"
             )
 
-    def _extract_entities(self, task_spec: TaskSpec) -> AgentResponse:
+    def _extract_entities(self, task_spec: TaskSpec, progress_callback=None) -> AgentResponse:
         """提取实体数据。"""
         input_text = self._resolve_input_text(task_spec)
         if not input_text.strip():
@@ -69,6 +70,7 @@ class AgentB(BaseAgent):
             input_text=input_text,
             fields=schema["fields"],
             instruction=task_spec.instruction,
+            progress_callback=progress_callback,
         )
 
         return AgentResponse(
@@ -192,6 +194,7 @@ class AgentB(BaseAgent):
         input_text: str,
         fields: List[str],
         instruction: str,
+        progress_callback=None,
     ) -> Tuple[List[Dict[str, List[str]]], int, int]:
         if not self.model:
             raise RuntimeError("提取模型未初始化，请检查 LLM_PROVIDER 与 API Key")
@@ -202,6 +205,10 @@ class AgentB(BaseAgent):
         max_workers = int(os.getenv("EXTRACTION_MAX_WORKERS", "5"))
         chunk_size = int(os.getenv("EXTRACTION_CHUNK_SIZE", "500"))
         chunks_with_offset = split_text_semantic_with_offset(input_text, chunk_size)
+
+        # 立即通知前端任务已启动（此时文本已分块完毕，后端开始并发抽取）
+        if progress_callback:
+            progress_callback(0, len(chunks_with_offset), f"开始提取 {len(chunks_with_offset)} 个分块...")
 
         prompt_description = f"""
 从文本中提取以下字段：
@@ -227,8 +234,12 @@ class AgentB(BaseAgent):
         ]
         unicode_tokenizer = tokenizer.UnicodeTokenizer()
 
+        # 注意：progress_callback 是普通函数，直接在当前线程调用即可
+        # queue.Queue.put_nowait() 本身是线程安全的
+
         all_entities: List[Dict[str, List[str]]] = []
         total_extractions = 0
+        total_chunks = len(chunks_with_offset)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
@@ -245,13 +256,18 @@ class AgentB(BaseAgent):
                 for chunk, offset in chunks_with_offset
             ]
 
-            for future in as_completed(futures):
+            for i, future in enumerate(as_completed(futures), 1):
                 result = future.result()
                 if result["status"] == "success":
                     total_extractions += result["extractions_count"]
                     all_entities.extend(result["entities"])
                 else:
                     self.logger.warning(f"分块抽取失败: {result['error']}")
+
+                # 分块完成回调：直接在当前线程执行（queue.Queue 线程安全）
+                if progress_callback:
+                    msg = f"分块 {i}/{total_chunks}，已提取 {len(all_entities)} 条"
+                    progress_callback(i, total_chunks, msg)
 
         return all_entities, len(chunks_with_offset), total_extractions
 

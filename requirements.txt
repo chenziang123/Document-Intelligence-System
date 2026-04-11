@@ -8,7 +8,7 @@ docling>=2.23.0
 # 系统依赖
 python-dotenv>=1.0.0
 openai>=1.44.0
-langextract>=1.0.8
+langextract>=1.2.1
 pydantic>=2.7.0
 jsonschema>=4.23.0
 rapidfuzz>=3.9.0

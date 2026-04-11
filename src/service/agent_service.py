@@ -163,6 +163,7 @@ class AgentService:
         mode: str = "default_conversation",
         files: Optional[List[Dict[str, Any]]] = None,
         template_files: Optional[List[Dict[str, Any]]] = None,
+        progress_callback=None,
     ) -> AsyncGenerator[str, None]:
         """
         流式聊天响应。
@@ -184,6 +185,33 @@ class AgentService:
             agent = await self._get_document_agent(session_id, content, files)
             async for part in self._stream_sync_generator(agent.stream_chat(content)):
                 yield part
+            return
+
+        # 实体提取模式：返回完整 JSON（非流式），支持进度回调
+        if mode == "entity_extraction":
+            import json
+            task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
+
+            # 在后台线程跑阻塞的 coordinator.execute，主 event loop 的轮询负责处理进度
+            result = await asyncio.to_thread(
+                self.coordinator.execute,
+                task_spec,
+                progress_callback=progress_callback,
+            )
+            await asyncio.sleep(0)
+
+            # result.data 是 WorkflowResult，.data 是 AgentResponse，.data.data 才是字典
+            agent_response = result.data if result.data else None
+            inner_data = agent_response.data if agent_response else {}
+            response_data = {
+                "success": result.success,
+                "message": result.message,
+                "entities": inner_data.get("entities") if isinstance(inner_data, dict) else [],
+                "schema": inner_data.get("schema") if isinstance(inner_data, dict) else {},
+                "chunk_count": inner_data.get("chunk_count") if isinstance(inner_data, dict) else 0,
+                "total_extractions": inner_data.get("total_extractions") if isinstance(inner_data, dict) else 0,
+            }
+            yield json.dumps(response_data, ensure_ascii=False)
             return
 
         # 其他模式：模拟流式输出

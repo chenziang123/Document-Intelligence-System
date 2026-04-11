@@ -87,6 +87,11 @@ class TaskSpec:
         if not self.source_files:
             return False, "缺少源文件"
 
+        # 检查源文件路径是否有效
+        for f in self.source_files:
+            if not f.path or not f.path.strip():
+                return False, f"源文件路径为空: {f.name}"
+
         if self.task_type == TaskType.DOCUMENT_EDITING:
             docx_files = self.get_source_by_type(FileType.DOCX)
             if not docx_files:
@@ -97,6 +102,8 @@ class TaskSpec:
                 return False, "实体提取模式需要提供非结构化文档 (docx/pdf/txt/md)"
             if not self.template_file:
                 return False, "实体提取模式需要提供模板文件 (xlsx)"
+            if not self.template_file.path or not self.template_file.path.strip():
+                return False, "模板文件路径为空"
 
         elif self.task_type == TaskType.TABLE_FILLING:
             if not self.has_table():
