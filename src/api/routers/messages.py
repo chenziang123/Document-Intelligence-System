@@ -5,16 +5,21 @@ import json
 import asyncio
 import queue
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from config import load_config
+from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage
+from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import (
     add_message,
     get_messages,
     get_session_by_id,
+    add_session_file,
+    get_session_files,
 )
 from core.agents.agent_d import run_agent_d_api
 from service.agent_service import AgentService, get_selected_session_files_payload
@@ -54,6 +59,17 @@ class SendMessageResponse(BaseModel):
     created_at: str
 
 
+def _resolve_current_user(authorization: Optional[str], cfg):
+    if not authorization:
+        if cfg.auth.require_auth:
+            raise HTTPException(status_code=401, detail="需要登录后访问")
+        return None
+    try:
+        return resolve_user_from_authorization(authorization, cfg, required=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+
 def _pick_table_filling_inputs(files: List[Dict[str, Any]], template_files: List[Dict[str, Any]]):
     """Pick one xlsx source and one template for direct table filling execution."""
 
@@ -63,6 +79,25 @@ def _pick_table_filling_inputs(files: List[Dict[str, Any]], template_files: List
         None,
     )
     return source_file, template_file
+
+
+def _resolve_file_reference(file_info: Dict[str, Any], cfg, session_id: str, kind: str) -> str:
+    storage_key = str(file_info.get("storage_key") or "").strip()
+    if not storage_key:
+        return ""
+
+    local_name = str(file_info.get("file_name") or storage_key).strip() or storage_key
+    cache_path = Path(cfg.temp_dir) / "file_cache" / session_id / kind / local_name
+    if cache_path.exists():
+        return str(cache_path)
+
+    if cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+        try:
+            return str(download_file_to_local(storage_key, cache_path, config=cfg))
+        except Exception:
+            return storage_key
+
+    return storage_key
 
 
 def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,6 +123,24 @@ def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_entity_extraction_response(raw_response: str) -> str:
+    """将实体提取的原始 JSON 响应转换为简短摘要。"""
+    if not isinstance(raw_response, str) or not raw_response.strip():
+        return "实体提取完成，共提取 0 条数据"
+
+    try:
+        parsed = json.loads(raw_response)
+    except Exception:
+        return "实体提取完成"
+
+    if not isinstance(parsed, dict):
+        return "实体提取完成"
+
+    entities = parsed.get("entities")
+    count = len(entities) if isinstance(entities, list) else 0
+    return f"实体提取完成，共提取 {count} 条数据"
+
+
 def _message_to_dict(m) -> Dict[str, Any]:
     return {
         "id": m.id,
@@ -99,24 +152,81 @@ def _message_to_dict(m) -> Dict[str, Any]:
     }
 
 
+def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], payload: Dict[str, Any]) -> None:
+    candidate_paths = []
+    for key in ("excel_path", "template_output", "output_json"):
+        value = payload.get(key)
+        if value:
+            candidate_paths.append(str(value))
+    for candidate in candidate_paths:
+        try:
+            path_obj = Path(candidate)
+            if not path_obj.exists():
+                continue
+            storage_key = None
+            try:
+                storage_key = upload_file_to_storage(
+                    path_obj,
+                    config=cfg,
+                    blob_name=build_blob_name(session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
+                )
+            except Exception:
+                storage_key = None
+            add_session_file(
+                session_id=session_id,
+                file_name=path_obj.name,
+                file_type="generated",
+                file_path=storage_key or "",
+                file_size=path_obj.stat().st_size,
+                config=cfg,
+                user_id=user_id,
+                source="generated",
+                role="output",
+                storage_key=storage_key,
+            )
+            try:
+                path_obj.unlink(missing_ok=True)
+            except Exception:
+                pass
+        except Exception:
+            continue
+
+
+def _collect_new_generated_files(session_id: str, cfg, user_id: Optional[str], before_ids: set[int]) -> List[Dict[str, Any]]:
+    generated: List[Dict[str, Any]] = []
+    try:
+        rows = get_session_files(session_id, config=cfg, user_id=user_id)
+    except Exception:
+        return generated
+    for f in rows:
+        if f.id in before_ids:
+            continue
+        if getattr(f, "role", "") != "output":
+            continue
+        generated.append({"file_id": f.id, "file_name": f.file_name})
+    return generated
+
+
 @router.get("/{session_id}", response_model=List[MessageResponse])
-async def get_messages_api(session_id: str, limit: int = 100, offset: int = 0):
+async def get_messages_api(session_id: str, limit: int = 100, offset: int = 0, authorization: Optional[str] = Header(default=None)):
     """获取会话消息历史"""
     cfg = load_config()
-    messages = get_messages(session_id, limit=limit, offset=offset, config=cfg)
+    current_user = _resolve_current_user(authorization, cfg)
+    messages = get_messages(session_id, limit=limit, offset=offset, config=cfg, user_id=current_user.id if current_user else None)
     return [_message_to_dict(m) for m in messages]
 
 
 @router.post("/{session_id}", response_model=SendMessageResponse)
-async def send_message(session_id: str, request: SendMessageRequest):
+async def send_message(session_id: str, request: SendMessageRequest, authorization: Optional[str] = Header(default=None)):
     """
     发送消息并获取 AI 回复（非流式版本）
     用于简单场景或调试
     """
     cfg = load_config()
+    current_user = _resolve_current_user(authorization, cfg)
     
     # 检查会话是否存在
-    session = get_session_by_id(session_id, config=cfg)
+    session = get_session_by_id(session_id, config=cfg, user_id=current_user.id if current_user else None)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
     
@@ -135,6 +245,7 @@ async def send_message(session_id: str, request: SendMessageRequest):
         request.content,
         user_meta,
         config=cfg,
+        user_id=current_user.id if current_user else None,
     )
 
     if request.files is not None or request.template_files is not None:
@@ -148,9 +259,9 @@ async def send_message(session_id: str, request: SendMessageRequest):
         source_file, template_file = _pick_table_filling_inputs(db_data_files, db_template_files)
         if source_file and template_file:
             response = run_agent_d_api(
-                src=str(source_file.get("file_path", "")),
+                src=_resolve_file_reference(source_file, cfg, session_id, "source"),
                 prompt=request.content,
-                template=str(template_file.get("file_path", "")),
+                template=_resolve_file_reference(template_file, cfg, session_id, "template"),
                 output_json="",
                 output_template="",
                 allow_rule_fallback=True,
@@ -162,12 +273,18 @@ async def send_message(session_id: str, request: SendMessageRequest):
                 table_filling_data.get("message", ""),
                 {"mode": effective_mode, "tableFillingData": table_filling_data},
                 config=cfg,
+                user_id=current_user.id if current_user else None,
             )
+            _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
             return SendMessageResponse(
                 message_id=ai_msg.id,
                 content=ai_msg.content,
                 created_at=ai_msg.created_at.isoformat() + "Z",
             )
+
+    before_file_ids = {
+        f.id for f in get_session_files(session_id, config=cfg, user_id=current_user.id if current_user else None)
+    }
 
     # 调用 Agent 服务获取回复（必须与前端所选模式一致，否则恒走默认对话）
     agent_service = AgentService()
@@ -178,9 +295,30 @@ async def send_message(session_id: str, request: SendMessageRequest):
         files=db_data_files,
         template_files=db_template_files,
     )
+
+    assistant_content = response
+    assistant_meta: Dict[str, Any] = {"mode": effective_mode}
+    if effective_mode == "entity_extraction":
+        assistant_content = _normalize_entity_extraction_response(response)
+
+    generated_files = _collect_new_generated_files(
+        session_id,
+        cfg,
+        current_user.id if current_user else None,
+        before_file_ids,
+    )
+    if generated_files:
+        assistant_meta["generated_files"] = generated_files
     
     # 保存 AI 回复
-    ai_msg = add_message(session_id, "assistant", response, config=cfg)
+    ai_msg = add_message(
+        session_id,
+        "assistant",
+        assistant_content,
+        assistant_meta,
+        config=cfg,
+        user_id=current_user.id if current_user else None,
+    )
     
     return SendMessageResponse(
         message_id=ai_msg.id,
@@ -226,9 +364,20 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
     后端流式返回：{"type": "chunk", "content": "..."} 或 {"type": "done", "content": "..."}
     """
     cfg = load_config()
+    current_user = None
+    authorization = websocket.headers.get("authorization") or websocket.query_params.get("token")
+    if authorization:
+        try:
+            current_user = resolve_user_from_authorization(authorization, cfg, required=True, allow_raw_token=True)
+        except PermissionError as exc:
+            await websocket.close(code=4401, reason=str(exc))
+            return
+    elif cfg.auth.require_auth:
+        await websocket.close(code=4401, reason="需要登录后访问")
+        return
     
     # 检查会话是否存在
-    session = get_session_by_id(session_id, config=cfg)
+    session = get_session_by_id(session_id, config=cfg, user_id=current_user.id if current_user else None)
     if not session:
         await websocket.close(code=4004, reason="会话不存在")
         return
@@ -268,8 +417,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         matched = db_path_map.get(cf.get('file_name'))
                         if matched:
                             files.append(matched)
-                        elif cf.get('file_path'):
-                            # 前端直接传了 file_path（混合模式串行处理，清除选中状态后用）
+                        elif cf.get('storage_key'):
+                            # 前端直接传了 storage_key（混合模式串行处理，清除选中状态后用）
                             files.append(cf)
                 else:
                     files = db_data_files
@@ -279,7 +428,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         matched = db_tpl_path_map.get(ct.get('file_name'))
                         if matched:
                             template_files.append(matched)
-                        elif ct.get('file_path'):
+                        elif ct.get('storage_key'):
                             template_files.append(ct)
                 else:
                     template_files = db_template_files
@@ -294,7 +443,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         matched = db_path_map.get(cf.get('file_name'))
                         if matched:
                             files.append(matched)
-                        elif cf.get('file_path'):
+                        elif cf.get('storage_key'):
                             files.append(cf)
                 else:
                     files = db_data_files
@@ -304,7 +453,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         matched = db_tpl_path_map.get(ct.get('file_name'))
                         if matched:
                             template_files.append(matched)
-                        elif ct.get('file_path'):
+                        elif ct.get('storage_key'):
                             template_files.append(ct)
                 else:
                     template_files = db_template_files
@@ -316,13 +465,13 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         user_meta["files"] = files
                     if template_files:
                         user_meta["template_files"] = template_files
-                    add_message(session_id, "user", user_content, user_meta, config=cfg)
+                    add_message(session_id, "user", user_content, user_meta, config=cfg, user_id=current_user.id if current_user else None)
                     await manager.send_json(session_id, {"type": "start", "mode": mode})
                     response = await asyncio.to_thread(
                         run_agent_d_api,
-                        src=str(source_file.get("file_path", "")),
+                        src=_resolve_file_reference(source_file, cfg, session_id, "source"),
                         prompt=user_content,
-                        template=str(template_file.get("file_path", "")),
+                        template=_resolve_file_reference(template_file, cfg, session_id, "template"),
                         output_json="",
                         output_template="",
                         allow_rule_fallback=True,
@@ -330,7 +479,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     table_filling_data = _flatten_table_filling_response(response)
                     full_response = json.dumps(table_filling_data, ensure_ascii=False)
                     await manager.send_json(session_id, {"type": "chunk", "content": full_response, "result_type": "table_filling"})
-                    add_message(session_id, "assistant", table_filling_data.get("message", ""), {"mode": mode, "tableFillingData": table_filling_data}, config=cfg)
+                    add_message(session_id, "assistant", table_filling_data.get("message", ""), {"mode": mode, "tableFillingData": table_filling_data}, config=cfg, user_id=current_user.id if current_user else None)
+                    _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
                     await manager.send_json(session_id, {"type": "done"})
                     continue
             elif client_files or client_templates:
@@ -346,10 +496,14 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 user_meta["template_files"] = template_files
 
             # 保存用户消息（含附件元数据）
-            add_message(session_id, "user", user_content, user_meta, config=cfg)
+            add_message(session_id, "user", user_content, user_meta, config=cfg, user_id=current_user.id if current_user else None)
             
             # 发送开始信号
             await manager.send_json(session_id, {"type": "start", "mode": mode})
+
+            before_file_ids = {
+                f.id for f in get_session_files(session_id, config=cfg, user_id=current_user.id if current_user else None)
+            }
 
             # 进度队列：线程安全信令，规避 run_coroutine_threadsafe 在主 loop 阻塞时无法执行的问题
             progress_queue: queue.Queue = queue.Queue()
@@ -406,7 +560,28 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 await asyncio.sleep(0.05)
             await drain_queue()
 
-            add_message(session_id, "assistant", full_response, {"mode": mode}, config=cfg)
+            assistant_content = full_response
+            assistant_meta: Dict[str, Any] = {"mode": mode}
+            if mode == "entity_extraction":
+                assistant_content = _normalize_entity_extraction_response(full_response)
+
+            generated_files = _collect_new_generated_files(
+                session_id,
+                cfg,
+                current_user.id if current_user else None,
+                before_file_ids,
+            )
+            if generated_files:
+                assistant_meta["generated_files"] = generated_files
+
+            add_message(
+                session_id,
+                "assistant",
+                assistant_content,
+                assistant_meta,
+                config=cfg,
+                user_id=current_user.id if current_user else None,
+            )
             await manager.send_json(session_id, {"type": "done"})
             
     except WebSocketDisconnect:

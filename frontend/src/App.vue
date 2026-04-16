@@ -1,14 +1,17 @@
 <script setup>
 import { NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import ChatArea from './components/ChatArea.vue'
 import ModeSelector from './components/ModeSelector.vue'
 import FilePanel from './components/FilePanel.vue'
+import AuthPanel from './components/AuthPanel.vue'
 import { useSessionStore } from './stores/sessionStore'
 
 const sessionStore = useSessionStore()
-sessionStore.init()
+onMounted(() => {
+  sessionStore.init()
+})
 
 const themeOverrides = {
   common: {
@@ -18,9 +21,18 @@ const themeOverrides = {
 }
 
 const sidebarCollapsed = ref(false)
+const userDisplayName = computed(() => {
+  const u = sessionStore.currentUser
+  if (!u) return ''
+  return u.display_name || u.phone
+})
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+async function handleLogout() {
+  await sessionStore.logout()
 }
 </script>
 
@@ -28,7 +40,8 @@ function toggleSidebar() {
   <n-config-provider :theme-overrides="themeOverrides">
     <n-message-provider>
       <n-dialog-provider>
-        <div class="h-screen flex">
+        <AuthPanel v-if="!sessionStore.isAuthenticated" />
+        <div v-else class="h-screen flex">
           <!-- 侧边栏（展开） -->
           <transition name="sidebar-expand">
             <aside
@@ -81,8 +94,22 @@ function toggleSidebar() {
           <!-- 主内容区 -->
           <main class="flex-1 flex flex-col min-w-0">
             <!-- 模式选择器 -->
-            <div class="border-b bg-white px-4 py-3">
-              <ModeSelector />
+            <div class="border-b bg-white px-4 py-3 flex items-center justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <ModeSelector />
+              </div>
+              <div class="shrink-0 flex items-center gap-3">
+                <div class="hidden sm:block text-right">
+                  <div class="text-xs text-gray-500">当前账号</div>
+                  <div class="text-sm text-gray-700 max-w-44 truncate">{{ userDisplayName }}</div>
+                </div>
+                <button
+                  class="px-3 py-1.5 text-xs rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 transition-colors"
+                  @click="handleLogout"
+                >
+                  退出登录
+                </button>
+              </div>
             </div>
 
             <!-- 文件面板 -->

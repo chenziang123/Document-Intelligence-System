@@ -7,10 +7,13 @@ from dataclasses import dataclass
 import json
 from datetime import datetime
 from pathlib import Path
+from openpyxl import Workbook
 
 from .task_spec import TaskSpec, TaskType, FileInfo
 from .executor import TaskExecutor
 from config import SystemConfig, get_config
+from core.storage import build_blob_name, upload_file_to_storage
+from db.session_repository import add_session_file, get_session_by_id
 from db.workflow_persistence import (
     persist_workflow_execute_begin,
     persist_workflow_execute_end,
@@ -81,6 +84,7 @@ class WorkflowCoordinator:
 
         try:
             result = handler(task_spec, progress_callback=progress_callback)
+            self._persist_generated_file(task_spec, result)
             persist_workflow_execute_end(
                 task_spec, result.success, result.message, self.config
             )
@@ -108,7 +112,7 @@ class WorkflowCoordinator:
             data=result
         )
 
-    def _document_understanding_flow(self, task_spec: TaskSpec) -> WorkflowResult:
+    def _document_understanding_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
         文档理解模式
         1. 初始化 DocumentAgent
@@ -143,7 +147,7 @@ class WorkflowCoordinator:
             source_files=task_spec.source_files or []
         )
 
-    def _document_editing_flow(self, task_spec: TaskSpec) -> WorkflowResult:
+    def _document_editing_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
         文档编辑模式
         1. 解析文档
@@ -162,11 +166,15 @@ class WorkflowCoordinator:
             mode="editing"
         )
 
+        output_file = task_spec.output_file
+        if isinstance(getattr(result, "data", None), dict):
+            output_file = result.data.get("output_file") or output_file
+
         return WorkflowResult(
             success=True,
-            message="文档编辑完成",
+            message="文档编辑完成，已生成可下载文件",
             data=result,
-            output_file=task_spec.output_file
+            output_file=output_file
         )
 
     def _entity_extraction_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
@@ -203,14 +211,24 @@ class WorkflowCoordinator:
             if task_spec.output_file
             else f"entity_extraction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         )
-        saved_path = self.result_handler.save_json(
+        payload = getattr(extracted_data, "data", {})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        saved_json_path = self.result_handler.save_json(
             data=getattr(extracted_data, "data", {}),
             filename=output_filename,
         )
-        if saved_path:
+        saved_xlsx_path = self._save_entities_xlsx(
+            payload,
+            Path(output_filename).with_suffix(".xlsx").name,
+        )
+
+        generated_paths = [p for p in (saved_json_path, saved_xlsx_path) if p]
+        if generated_paths:
             extracted_data.metadata = extracted_data.metadata or {}
-            extracted_data.metadata["saved_path"] = saved_path
-            extracted_data.message = f"{extracted_data.message}，结果已保存到: {saved_path}"
+            extracted_data.metadata["generated_file_paths"] = generated_paths
+            extracted_data.message = "实体提取完成，已生成可下载文件"
 
         # 3. 填入模板
         if task_spec.template_file:
@@ -223,15 +241,63 @@ class WorkflowCoordinator:
                 success=True,
                 message="实体提取完成",
                 data=extracted_data,
-                output_file=saved_path or task_spec.output_file
+                output_file=saved_json_path or saved_xlsx_path or task_spec.output_file
             )
 
         return WorkflowResult(
             success=True,
             message="实体提取完成",
             data=extracted_data,
-            output_file=saved_path or task_spec.output_file,
+            output_file=saved_json_path or saved_xlsx_path or task_spec.output_file,
         )
+
+    def _save_entities_xlsx(self, payload: Dict[str, Any], filename: str) -> str:
+        """将实体提取结果另存为 xlsx，便于直接下载分析。"""
+        output_path = Path(self.config.output_dir) / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        entities = payload.get("entities", []) if isinstance(payload, dict) else []
+        schema = payload.get("schema", {}) if isinstance(payload, dict) else {}
+        fields = schema.get("fields", []) if isinstance(schema, dict) else []
+
+        if not isinstance(entities, list):
+            entities = []
+        if not isinstance(fields, list):
+            fields = []
+        if not fields and entities and isinstance(entities[0], dict):
+            fields = list(entities[0].keys())
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "entities"
+
+            headers = ["序号", *fields]
+            ws.append(headers)
+
+            for idx, row in enumerate(entities, start=1):
+                if not isinstance(row, dict):
+                    continue
+                values = [idx]
+                for field in fields:
+                    values.append(self._to_excel_cell(row.get(field)))
+                ws.append(values)
+
+            wb.save(output_path)
+            return str(output_path)
+        except Exception as exc:
+            self.logger.warning(f"保存实体提取 xlsx 失败: {exc}")
+            return ""
+
+    @staticmethod
+    def _to_excel_cell(value: Any) -> Any:
+        if isinstance(value, list):
+            if not value:
+                return ""
+            return value[0]
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return "" if value is None else value
 
     def _table_filling_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
@@ -254,6 +320,76 @@ class WorkflowCoordinator:
             data=result,
             output_file=task_spec.output_file
         )
+
+    def _persist_generated_file(self, task_spec: TaskSpec, result: WorkflowResult) -> None:
+        """将工作流生成的输出文件登记到会话文件表，供会话历史统一查看。"""
+        if not task_spec.session_id:
+            return
+
+        candidate_paths: List[str] = []
+        if result.output_file:
+            candidate_paths.append(str(result.output_file))
+
+        agent_response = result.data
+        if agent_response is not None:
+            metadata = getattr(agent_response, "metadata", None)
+            if isinstance(metadata, dict):
+                extra_files = metadata.get("generated_file_paths")
+                if isinstance(extra_files, list):
+                    candidate_paths.extend([str(p) for p in extra_files if p])
+
+            inner_data = getattr(agent_response, "data", None)
+            if isinstance(inner_data, dict):
+                for key in ("output_file", "output_json", "template_output", "excel_path"):
+                    if inner_data.get(key):
+                        candidate_paths.append(str(inner_data[key]))
+
+        # 去重并过滤空值
+        dedup_paths: List[str] = []
+        seen = set()
+        for p in candidate_paths:
+            pp = str(p).strip()
+            if not pp or pp in seen:
+                continue
+            seen.add(pp)
+            dedup_paths.append(pp)
+
+        if not dedup_paths:
+            return
+
+        session = get_session_by_id(task_spec.session_id, config=self.config)
+        if not session:
+            return
+        try:
+            task_uuid = task_spec.parameters.get("task_uuid")
+            for output_file in dedup_paths:
+                path = Path(output_file)
+                if not path.exists():
+                    continue
+                storage_key = None
+                try:
+                    storage_key = upload_file_to_storage(
+                        path,
+                        config=self.config,
+                        blob_name=build_blob_name(task_spec.session_id, path.name, prefix=self.config.storage.azure_blob_prefix),
+                    )
+                except Exception:
+                    storage_key = None
+                add_session_file(
+                    session_id=task_spec.session_id,
+                    file_name=path.name,
+                    file_type="generated",
+                    file_path=str(path),
+                    file_size=path.stat().st_size,
+                    config=self.config,
+                    user_id=session.user_id,
+                    source="generated",
+                    role="output",
+                    task_uuid=str(task_uuid) if task_uuid else None,
+                    storage_key=storage_key,
+                )
+        except Exception as exc:
+            self.logger.warning(f"登记生成文件失败: {exc}")
 
     def get_available_workflows(self) -> Dict[str, str]:
         """获取所有可用的工作流"""

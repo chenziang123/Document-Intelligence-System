@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS session_files (
     id SERIAL PRIMARY KEY,
     session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     file_name VARCHAR(255) NOT NULL,
-    file_type VARCHAR(20) NOT NULL CHECK (file_type IN ('data', 'template')),
+    file_type VARCHAR(20) NOT NULL CHECK (file_type IN ('data', 'template', 'generated')),
     file_path VARCHAR(1024) NOT NULL,
     file_size BIGINT NOT NULL DEFAULT 0,
     is_selected BOOLEAN NOT NULL DEFAULT FALSE,

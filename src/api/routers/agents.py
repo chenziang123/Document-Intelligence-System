@@ -3,8 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
+
+from config import load_config
+from core.storage import build_blob_name, upload_file_to_storage
+from db.auth_repository import resolve_user_from_authorization
+from db.session_repository import add_session_file, get_session_by_id
 
 router = APIRouter(prefix="/api/agents", tags=["Agent编排"])
 
@@ -97,9 +102,23 @@ async def execute_task(task: TaskSpec):
 
 
 @router.post("/mixed-fill")
-async def mixed_fill(request: MixedFillRequest):
+async def mixed_fill(request: MixedFillRequest, authorization: str | None = Header(default=None)):
     """统一填表：将mixed模式合并实体写入一个模板（xlsx/docx）。"""
     from core.agents.agent_d import run_agent_d_fill_from_entities
+
+    cfg = load_config()
+    current_user = None
+    if authorization:
+        try:
+            current_user = resolve_user_from_authorization(authorization, cfg, required=True)
+        except PermissionError as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=401, detail=str(exc))
+    elif cfg.auth.require_auth:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="需要登录后访问")
 
     result = run_agent_d_fill_from_entities(
         entities=request.entities,
@@ -111,4 +130,36 @@ async def mixed_fill(request: MixedFillRequest):
         template_start_row=request.template_start_row,
         template_table_index=request.template_table_index,
     )
+    output_path = result.get("data", {}).get("output_template") if isinstance(result, dict) else None
+    if output_path:
+        try:
+            from pathlib import Path
+
+            path_obj = Path(str(output_path))
+            if path_obj.exists():
+                storage_key = None
+                try:
+                    storage_key = upload_file_to_storage(
+                        path_obj,
+                        config=cfg,
+                        blob_name=build_blob_name(session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
+                    )
+                except Exception:
+                    storage_key = None
+                session = get_session_by_id(request.session_id, config=cfg, user_id=current_user.id if current_user else None)
+                if session:
+                    add_session_file(
+                        session_id=request.session_id,
+                        file_name=path_obj.name,
+                        file_type=path_obj.suffix.lower().lstrip(".") or "output",
+                        file_path=str(path_obj),
+                        file_size=path_obj.stat().st_size,
+                        config=cfg,
+                        user_id=current_user.id if current_user else None,
+                        source="generated",
+                        role="output",
+                        storage_key=storage_key,
+                    )
+        except Exception:
+            pass
     return result

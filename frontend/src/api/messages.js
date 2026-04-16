@@ -12,6 +12,8 @@ export default {
   connect(sessionId) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    return new WebSocket(`${protocol}//${host}/api/messages/ws/${sessionId}`)
+    const token = window.localStorage.getItem('access_token')
+    const query = token ? `?token=${encodeURIComponent(token)}` : ''
+    return new WebSocket(`${protocol}//${host}/api/messages/ws/${sessionId}${query}`)
   },
 }

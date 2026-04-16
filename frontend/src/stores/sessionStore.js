@@ -4,6 +4,7 @@ import sessionApi from '../api/sessions'
 import messageApi from '../api/messages'
 import fileApi from '../api/files'
 import agentApi from '../api/agents'
+import authApi from '../api/auth'
 
 const DEFAULT_MODES = [
   {
@@ -57,6 +58,7 @@ function mergeModesWithDefaults(remoteModes = []) {
 }
 
 export const useSessionStore = defineStore('session', () => {
+  const currentUser = ref(null)
   const sessions = ref([])
   const currentSessionId = ref(null)
   const messages = ref([])
@@ -90,6 +92,8 @@ export const useSessionStore = defineStore('session', () => {
     sessions.value.find(s => s.session_id === currentSessionId.value)
   )
 
+  const isAuthenticated = computed(() => !!currentUser.value)
+
   const selectedDataFiles = computed(() =>
     dataFiles.value.filter(f => f.is_selected)
   )
@@ -108,6 +112,49 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   const currentModeConfig = computed(() => modeConfig[currentMode.value] || modeConfig['default_conversation'])
+
+  function clearConversationState() {
+    sessions.value = []
+    currentSessionId.value = null
+    messages.value = []
+    dataFiles.value = []
+    templateFiles.value = []
+  }
+
+  async function loadCurrentUser() {
+    try {
+      const user = await authApi.me()
+      currentUser.value = user
+      return user
+    } catch (e) {
+      currentUser.value = null
+      return null
+    }
+  }
+
+  async function login(phone, password) {
+    const res = await authApi.login({ phone, password })
+    currentUser.value = res?.user || null
+    await loadSessions()
+    return res
+  }
+
+  async function register(phone, password, displayName = null) {
+    const res = await authApi.register({ phone, password, display_name: displayName })
+    currentUser.value = res?.user || null
+    await loadSessions()
+    return res
+  }
+
+  async function logout() {
+    try {
+      await authApi.logout()
+    } finally {
+      currentUser.value = null
+      clearConversationState()
+      disconnectWebSocket()
+    }
+  }
 
   async function loadSessions() {
     try {
@@ -151,9 +198,7 @@ export const useSessionStore = defineStore('session', () => {
         if (currentSessionId.value) {
           await selectSession(currentSessionId.value)
         } else {
-          messages.value = []
-          dataFiles.value = []
-          templateFiles.value = []
+          clearConversationState()
         }
       }
     } catch (e) {
@@ -204,8 +249,8 @@ export const useSessionStore = defineStore('session', () => {
         if (!normalized.tableFillingData && metadata.tableFillingData) {
           normalized.tableFillingData = metadata.tableFillingData
         }
-        if (!normalized.extractionData && metadata.extractionData) {
-          normalized.extractionData = metadata.extractionData
+        if (!normalized.generatedFiles && Array.isArray(metadata.generated_files)) {
+          normalized.generatedFiles = metadata.generated_files
         }
         return normalized
       })
@@ -335,16 +380,17 @@ export const useSessionStore = defineStore('session', () => {
         if (data.result_type === 'entity_extraction') {
           try {
             const parsed = JSON.parse(data.content)
+            const count = Array.isArray(parsed?.entities) ? parsed.entities.length : 0
+            const summary = `实体提取完成，共提取 ${count} 条数据`
             const lastMsg = messages.value[messages.value.length - 1]
             if (lastMsg && lastMsg.role === 'assistant') {
-              lastMsg.extractionData = parsed
+              lastMsg.content = summary
             } else {
               messages.value.push({
                 id: Date.now(),
                 role: 'assistant',
-                content: '',
+                content: summary,
                 created_at: new Date().toISOString(),
-                extractionData: parsed,
               })
             }
             // 保存实体提取数据到 pendingResultData
@@ -390,17 +436,11 @@ export const useSessionStore = defineStore('session', () => {
         showProgressBar.value = false
         progressValue.value = 100
         progressMessage.value = '处理完成'
+        if (currentSessionId.value) {
+          loadMessages(currentSessionId.value).catch((e) => console.error('刷新消息失败:', e))
+          loadFiles(currentSessionId.value).catch((e) => console.error('刷新文件失败:', e))
+        }
         if (pendingResolve) {
-          // 找到最后一个包含提取结果的消息（跳过进度消息）
-          let lastMsg = null
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            const msg = messages.value[i]
-            if (msg.isProgressMessage) continue
-            if (msg.extractionData || msg.tableFillingData) {
-              lastMsg = msg
-              break
-            }
-          }
           pendingResolve({ success: true, resp: pendingResultData })
           pendingResolve = null
           pendingResultData = null
@@ -447,6 +487,19 @@ export const useSessionStore = defineStore('session', () => {
     window.open(url, '_blank')
   }
 
+  function downloadSessionFile(fileId, fileName = 'download.bin') {
+    if (!currentSessionId.value || !fileId) return
+    const url = `/api/sessions/${encodeURIComponent(currentSessionId.value)}/files/${encodeURIComponent(fileId)}/download`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+
   function clearAllSelectedFiles() {
     dataFiles.value.forEach(f => { f.is_selected = false })
     templateFiles.value.forEach(f => { f.is_selected = false })
@@ -474,14 +527,14 @@ export const useSessionStore = defineStore('session', () => {
     const dataFiles = selectedDataFiles.value.map(f => ({
       file_id: f.id,
       file_name: f.file_name,
-      file_path: f.file_path,
+      storage_key: f.storage_key,
       file_size: f.file_size,
       is_selected: true,
     }))
     const templateFiles = selectedTemplateFiles.value.map(f => ({
       file_id: f.id,
       file_name: f.file_name,
-      file_path: f.file_path,
+      storage_key: f.storage_key,
       file_size: f.file_size,
       is_selected: true,
     }))
@@ -583,14 +636,9 @@ export const useSessionStore = defineStore('session', () => {
     messages.value.push({
       id: Date.now() + 999,
       role: 'assistant',
-      content: '',
+      content: `表格填表完成，共 ${allEntities.length} 条记录（来自 ${successfulResults.length} 个文件）`,
       created_at: new Date().toISOString(),
       mixedSource: 'merged',
-      extractionData: {
-        message: `表格填表完成，共 ${allEntities.length} 条记录（来自 ${successfulResults.length} 个文件）`,
-        entities: allEntities,
-        schema: { fields: Object.keys(allEntities[0] || {}) },
-      },
     })
     return true
   }
@@ -714,7 +762,7 @@ export const useSessionStore = defineStore('session', () => {
           const mixedFillResp = await agentApi.mixedFill({
             session_id: sessionId,
             entities: allEntities,
-            template_file: tpl.file_path,
+            template_file: tpl.storage_key,
             output_json: '',
             output_template: '',
           })
@@ -742,20 +790,12 @@ export const useSessionStore = defineStore('session', () => {
         }
       }
 
-      const firstEntityResult = successfulResults.find(r => r.task.mode === 'entity_extraction')
-      const schema = firstEntityResult?.extractionData?.schema || { fields: Object.keys(allEntities[0] || {}) }
-
       messages.value.push({
         id: Date.now() + 999,
         role: 'assistant',
-        content: '',
+        content: `混合模式完成，共 ${allEntities.length} 条记录（来自 ${successfulResults.length} 个文件）`,
         created_at: new Date().toISOString(),
         mixedSource: 'merged',
-        extractionData: {
-          message: `混合模式完成，共 ${allEntities.length} 条记录（来自 ${successfulResults.length} 个文件）`,
-          entities: allEntities,
-          schema: schema,
-        },
       })
       return
     }
@@ -792,6 +832,11 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function init() {
+    await loadCurrentUser()
+    if (!currentUser.value) {
+      clearConversationState()
+      return
+    }
     await loadSessions()
     await loadModes()
     if (sessions.value.length > 0) {
@@ -800,6 +845,8 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   return {
+    currentUser,
+    isAuthenticated,
     sessions,
     currentSessionId,
     messages,
@@ -816,6 +863,10 @@ export const useSessionStore = defineStore('session', () => {
     selectedDataFiles,
     selectedTemplateFiles,
     currentModeConfig,
+    loadCurrentUser,
+    login,
+    register,
+    logout,
     init,
     loadSessions,
     createSession,
@@ -836,5 +887,6 @@ export const useSessionStore = defineStore('session', () => {
     connectWebSocket,
     disconnectWebSocket,
     downloadFile,
+    downloadSessionFile,
   }
 })

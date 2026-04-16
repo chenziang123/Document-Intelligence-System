@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from config import SystemConfig, get_config
 from core.llm import get_llm_service
+from core.storage import download_file_to_local
 from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import TaskSpec, TaskType, FileInfo, FileType
 from db.session_repository import get_messages, get_session_files
@@ -39,6 +41,24 @@ def clear_session_agent(session_id: str):
             del _agent_cache[session_id]
 
 
+def _resolve_local_file_path(file_dict: Dict[str, Any], config: SystemConfig, session_id: str = None) -> str:
+    """把 storage_key 解析为可被本地 Agent 读取的临时文件路径。"""
+    storage_key = str(file_dict.get("storage_key") or "").strip()
+    if not storage_key:
+        return ""
+
+    file_name = str(file_dict.get("file_name") or storage_key).strip() or storage_key
+    cache_dir = Path(config.temp_dir) / "file_cache" / (session_id or "shared")
+    cache_path = cache_dir / file_name
+    if cache_path.exists():
+        return str(cache_path)
+
+    try:
+        return str(download_file_to_local(storage_key, cache_path, config=config))
+    except Exception:
+        return storage_key
+
+
 def set_agent_files(agent: Any, files: List[Dict[str, Any]], config: SystemConfig, session_id: str = None):
     """
     将消息携带的文件设置到 agent。
@@ -60,15 +80,19 @@ def set_agent_files(agent: Any, files: List[Dict[str, Any]], config: SystemConfi
         is_selected = f.get('is_selected', True)
         if not is_selected:
             continue
-        
-        # 优先使用传入的 file_path，如果为空则从数据库查询
-        file_path = f.get('file_path', '')
+        file_path = _resolve_local_file_path(f, config, session_id)
         if not file_path and session_id and f.get('file_id'):
-            # 从数据库获取完整的文件信息
             db_files = get_session_files(session_id, config=config)
             for db_file in db_files:
                 if db_file.id == f.get('file_id'):
-                    file_path = db_file.file_path
+                    file_path = _resolve_local_file_path(
+                        {
+                            "storage_key": getattr(db_file, "storage_key", None),
+                            "file_name": getattr(db_file, "file_name", ""),
+                        },
+                        config,
+                        session_id,
+                    )
                     break
         
         file_info = FileInfo(
@@ -111,7 +135,7 @@ def get_selected_session_files_payload(
         if not getattr(f, "is_selected", False):
             continue
         entry = {
-            "file_path": f.file_path,
+            "storage_key": getattr(f, "storage_key", None),
             "file_name": f.file_name,
             "is_selected": True,
         }
@@ -319,10 +343,10 @@ class AgentService:
         }
         return mapping.get(ext, FileType.TXT)
 
-    def _build_file_info(self, file_dict: Dict[str, Any]) -> FileInfo:
+    def _build_file_info(self, file_dict: Dict[str, Any], session_id: Optional[str] = None) -> FileInfo:
         """将文件字典转换为 FileInfo"""
         return FileInfo(
-            path=file_dict.get('file_path', ''),
+            path=_resolve_local_file_path(file_dict, self.config, session_id),
             file_type=self._get_file_type(file_dict.get('file_name', '')),
         )
 
@@ -336,14 +360,14 @@ class AgentService:
     ) -> TaskSpec:
         """构建任务规格"""
         # 获取数据文件
-        source_files = [self._build_file_info(f) for f in files if f.get('is_selected', True)]
+        source_files = [self._build_file_info(f, session_id) for f in files if f.get('is_selected', True)]
 
         # 获取模板文件
         template_file = None
         if template_files:
             selected_templates = [f for f in template_files if f.get('is_selected', True)]
             if selected_templates:
-                template_file = self._build_file_info(selected_templates[0])
+                template_file = self._build_file_info(selected_templates[0], session_id)
 
         return TaskSpec(
             task_type=self._get_task_type(mode),

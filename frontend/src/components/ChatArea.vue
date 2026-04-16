@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { NInput, NButton, NScrollbar, NTag, NProgress } from 'naive-ui'
 import { useSessionStore } from '../stores/sessionStore'
 import { assistantMarkdownToHtml } from '../utils/markdown'
-import * as XLSX from 'xlsx'
 
 const sessionStore = useSessionStore()
 const showProgress = computed(() => sessionStore.showProgressBar)
@@ -11,9 +10,6 @@ const progressVal = computed(() => sessionStore.progressValue)
 const progressMsg = computed(() => sessionStore.progressMessage)
 const inputValue = ref('')
 const messagesContainer = ref(null)
-
-// 实体提取表格最大显示行数
-const MAX_TABLE_ROWS = 10
 
 // 滚动到底部
 function scrollToBottom() {
@@ -45,7 +41,9 @@ function handleKeydown(e) {
 
 function formatTime(isoString) {
   if (!isoString) return ''
-  return new Date(isoString).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const dt = new Date(isoString)
+  if (Number.isNaN(dt.getTime())) return ''
+  return dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
 function formatFileSize(bytes) {
@@ -94,22 +92,16 @@ function renderAssistant(msg) {
   return assistantMarkdownToHtml(msg.content)
 }
 
-// 获取表格显示的行数（最多10行）
-function getTableRows(entities) {
-  if (!entities || !Array.isArray(entities)) return []
-  return entities.slice(0, MAX_TABLE_ROWS)
+function generatedFilesFromMessage(msg) {
+  if (!msg || msg.role !== 'assistant') return []
+  if (Array.isArray(msg.generatedFiles)) return msg.generatedFiles
+  const fromMeta = msg.metadata?.generated_files
+  return Array.isArray(fromMeta) ? fromMeta : []
 }
 
-// 获取表格列名
-function getTableColumns(schema) {
-  if (!schema || !schema.fields) return []
-  return schema.fields
-}
-
-// 获取实体数据总条数
-function getTotalCount(extractionData) {
-  if (!extractionData || !extractionData.entities) return 0
-  return extractionData.entities.length
+function downloadGeneratedFile(file) {
+  if (!file?.file_id) return
+  sessionStore.downloadSessionFile(file.file_id, file.file_name || 'generated-file')
 }
 
 const showStreamingPlaceholder = computed(() => {
@@ -118,11 +110,6 @@ const showStreamingPlaceholder = computed(() => {
   const last = list[list.length - 1]
   return !last || last.role !== 'assistant'
 })
-
-// 判断消息是否需要渲染为实体提取结果表格
-function isEntityExtractionMessage(msg) {
-  return msg.role === 'assistant' && msg.extractionData && msg.extractionData.entities
-}
 
 // 判断消息是否需要渲染为表格填表结果卡片
 function isTableFillingMessage(msg) {
@@ -142,63 +129,6 @@ function downloadFilteredJson(msg) {
   }
 }
 
-// 渲染单元格值（处理数组格式 [值, 位置]）
-function renderCellValue(rawValue) {
-  if (Array.isArray(rawValue)) {
-    return rawValue[0] || ''
-  }
-  return rawValue || ''
-}
-
-// 下载 JSON
-function downloadJson(msg) {
-  const data = {
-    message: msg.extractionData.message,
-    schema: msg.extractionData.schema,
-    entities: msg.extractionData.entities,
-  }
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `entity_extraction_${new Date().toISOString().replace(/[:.]/g, '-')}.json`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-// 下载 XLSX
-function downloadXlsx(msg) {
-  const { schema, entities } = msg.extractionData
-  const cols = schema?.fields || []
-
-  // 准备表头和数据
-  const header = ['序号', ...cols]
-  const rows = entities.map((row, idx) => [
-    idx + 1,
-    ...cols.map(col => {
-      const val = row[col]
-      if (Array.isArray(val)) return val[0] || ''
-      return val ?? ''
-    }),
-  ])
-
-  const wsData = [header, ...rows]
-  const ws = XLSX.utils.aoa_to_sheet(wsData)
-
-  // 自动列宽
-  const colWidths = header.map((h, ci) => {
-    const maxLen = wsData.reduce((acc, row) => {
-      const cell = String(row[ci] ?? '')
-      return Math.max(acc, cell.length)
-    }, h.length)
-    return { wch: Math.min(maxLen + 2, 50) }
-  })
-  ws['!cols'] = colWidths
-
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '实体提取结果')
-  XLSX.writeFile(wb, `entity_extraction_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`)
-}
 
 onMounted(() => {
   sessionStore.connectWebSocket()
@@ -311,73 +241,8 @@ onUnmounted(() => {
             v-else
             class="max-w-2xl rounded-lg bg-gray-100 px-4 py-2 text-gray-800"
           >
-            <!-- 实体提取结果表格 -->
-            <template v-if="isEntityExtractionMessage(msg)">
-              <!-- 摘要信息 -->
-              <div class="mb-3 flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <n-tag type="success" size="small">实体提取</n-tag>
-                  <span class="text-sm text-gray-600">{{ msg.extractionData.message }}</span>
-                </div>
-                <div class="flex items-center gap-1">
-                  <n-button size="tiny" @click="downloadJson(msg)">
-                    <template #icon>
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    </template>
-                    JSON
-                  </n-button>
-                  <n-button size="tiny" type="primary" @click="downloadXlsx(msg)">
-                    <template #icon>
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    </template>
-                    XLSX
-                  </n-button>
-                </div>
-              </div>
-              <!-- 数据表格 -->
-              <div class="overflow-x-auto">
-                <table class="min-w-full text-sm border-collapse border border-gray-300">
-                  <thead>
-                    <tr class="bg-gray-200">
-                      <th class="border border-gray-300 px-2 py-1 text-left font-medium">#</th>
-                      <th
-                        v-for="col in getTableColumns(msg.extractionData.schema)"
-                        :key="col"
-                        class="border border-gray-300 px-2 py-1 text-left font-medium"
-                      >
-                        {{ col }}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="(row, idx) in getTableRows(msg.extractionData.entities)"
-                      :key="idx"
-                      class="hover:bg-gray-50"
-                    >
-                      <td class="border border-gray-300 px-2 py-1 text-gray-400">{{ idx + 1 }}</td>
-                      <td
-                        v-for="col in getTableColumns(msg.extractionData.schema)"
-                        :key="col"
-                        class="border border-gray-300 px-2 py-1"
-                      >
-                        {{ renderCellValue(row[col]) }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <!-- 超过10行的提示 -->
-              <div
-                v-if="getTotalCount(msg.extractionData) > MAX_TABLE_ROWS"
-                class="mt-2 text-xs text-gray-500"
-              >
-                共 {{ getTotalCount(msg.extractionData) }} 条记录，仅显示前 {{ MAX_TABLE_ROWS }} 条。完整数据已保存。
-              </div>
-            </template>
-
             <!-- 表格填表结果卡片 -->
-            <template v-else-if="isTableFillingMessage(msg)">
+            <template v-if="isTableFillingMessage(msg)">
               <div class="mb-3">
                 <!-- 摘要行：标签 + 消息 + 统计 -->
                 <div class="flex items-center flex-wrap gap-2 mb-2">
@@ -447,6 +312,23 @@ onUnmounted(() => {
                 class="assistant-md break-words text-left"
                 v-html="renderAssistant(msg)"
               />
+              <div
+                v-if="generatedFilesFromMessage(msg).length > 0"
+                class="mt-2 flex flex-wrap items-center gap-2"
+              >
+                <n-button
+                  v-for="file in generatedFilesFromMessage(msg)"
+                  :key="file.file_id"
+                  size="tiny"
+                  type="primary"
+                  @click="downloadGeneratedFile(file)"
+                >
+                  <template #icon>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </template>
+                  下载 {{ file.file_name || '生成文件' }}
+                </n-button>
+              </div>
             </template>
             <div class="mt-1 text-xs text-gray-400">
               {{ formatTime(msg.created_at) }}

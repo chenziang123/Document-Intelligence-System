@@ -31,13 +31,30 @@ from .repository import (
     save_extraction_from_agent_payload_safe,
     set_task_review,
 )
+from .auth_repository import (
+    authenticate_user,
+    create_auth_session,
+    create_user,
+    get_auth_session_by_token,
+    get_user_by_id,
+    get_user_by_phone,
+    revoke_auth_session,
+    resolve_user_from_authorization,
+    update_user_last_login,
+)
+from .models import AuthSessionRow, UserRow
 from .workflow_persistence import persist_workflow_execute_begin, persist_workflow_execute_end
 
 __all__ = [
     "ExtractionResultRow",
+    "AuthSessionRow",
+    "authenticate_user",
+    "create_auth_session",
+    "create_user",
     "SaveExtractionOutcome",
     "TaskListPage",
     "TaskRow",
+    "UserRow",
     "build_conninfo",
     "db_connection",
     "get_latest_extraction_by_task_id",
@@ -47,6 +64,9 @@ __all__ = [
     "get_task_by_task_id_in_conn",
     "get_task_by_uuid",
     "get_task_timeline",
+    "get_auth_session_by_token",
+    "get_user_by_id",
+    "get_user_by_phone",
     "health_check",
     "insert_agent_log",
     "insert_audit_log",
@@ -60,7 +80,10 @@ __all__ = [
     "persist_workflow_execute_end",
     "reset_pool",
     "resolve_task_id",
+    "resolve_user_from_authorization",
     "save_extraction_from_agent_payload",
     "save_extraction_from_agent_payload_safe",
     "set_task_review",
+    "revoke_auth_session",
+    "update_user_last_login",
 ]

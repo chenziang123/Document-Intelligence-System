@@ -64,3 +64,11 @@ frontend/node_modules/
 
 # 再次确保 .env 文件被忽略
 .env
+tests/测试集
+src/workspace/uploads/
+workspace/uploads/
+temp/storage_cache/
+src/output/*.json
+src/output/*.xlsx
+src/temp/azure_blob_cache/
+src/temp/file_cache/

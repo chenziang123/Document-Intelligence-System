@@ -42,6 +42,7 @@ def create_session(
     title: str = "新会话",
     current_mode: str = "default_conversation",
     config=None,
+    user_id: Optional[str] = None,
 ) -> SessionRow:
     """创建新会话"""
     sid = _store._gen_id()
@@ -55,6 +56,7 @@ def create_session(
         current_mode=current_mode,
         created_at=now,
         updated_at=now,
+        user_id=user_id,
     )
     _store._sessions[sid] = session
     _store._sessions_by_uuid[session_id] = session
@@ -140,6 +142,7 @@ def add_message(
     content: str,
     metadata: Optional[dict] = None,
     config=None,
+    user_id: Optional[str] = None,
 ) -> MessageRow:
     """添加消息"""
     session = _store._sessions_by_uuid.get(session_id)
@@ -154,6 +157,7 @@ def add_message(
         content=content,
         metadata=metadata,
         created_at=now,
+        user_id=user_id or session.user_id,
     )
     _store._messages[session.id].append(msg)
 
@@ -197,6 +201,14 @@ def add_session_file(
     file_path: str,
     file_size: int,
     config=None,
+    user_id: Optional[str] = None,
+    source: str = "upload",
+    role: str = "source",
+    task_uuid: Optional[str] = None,
+    origin_file_id: Optional[int] = None,
+    storage_key: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    file_hash: Optional[str] = None,
 ) -> FileRow:
     """添加会话文件"""
     session = _store._sessions_by_uuid.get(session_id)
@@ -213,6 +225,14 @@ def add_session_file(
         file_size=file_size,
         is_selected=False,
         created_at=now,
+        user_id=user_id or session.user_id,
+        source=source,
+        role=role,
+        task_uuid=task_uuid,
+        origin_file_id=origin_file_id,
+        storage_key=storage_key,
+        mime_type=mime_type,
+        file_hash=file_hash,
     )
     _store._session_files[session.id].append(frow)
     return frow

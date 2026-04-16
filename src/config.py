@@ -56,11 +56,29 @@ class DatabaseConfig:
 
 
 @dataclass
+class AuthConfig:
+    """认证配置"""
+    secret_key: str = "change-me-in-production"
+    access_token_ttl_minutes: int = 60 * 24 * 7
+    require_auth: bool = False
+
+
+@dataclass
 class FileConfig:
     """文件配置"""
     max_file_size_mb: int = 50
     supported_document_types: list = field(default_factory=lambda: ["docx", "pdf", "txt", "md"])
     supported_table_types: list = field(default_factory=lambda: ["xlsx", "xls", "csv"])
+
+
+@dataclass
+class StorageConfig:
+    """文件存储配置"""
+    enabled: bool = False
+    provider: str = "local"
+    azure_connection_string: Optional[str] = None
+    azure_container_name: str = "document"
+    azure_blob_prefix: str = "sessions"
 
 
 @dataclass
@@ -153,7 +171,9 @@ class SystemConfig:
     temp_dir: str = "temp"
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
     file: FileConfig = field(default_factory=FileConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
 
 
@@ -203,6 +223,31 @@ def load_config() -> SystemConfig:
         config.database.sslmode = os.getenv("DB_SSLMODE", "prefer").strip()
     if os.getenv("DB_POOL_MAX"):
         config.database.pool_max_size = int(os.getenv("DB_POOL_MAX", "10"))
+
+    # 文件存储配置（支持 Azure Blob）
+    if os.getenv("STORAGE_PROVIDER"):
+        config.storage.provider = os.getenv("STORAGE_PROVIDER", "local").strip()
+    if os.getenv("STORAGE_ENABLED"):
+        config.storage.enabled = os.getenv("STORAGE_ENABLED").lower() == "true"
+    if os.getenv("AZURE_STORAGE_CONNECTION_STRING"):
+        config.storage.azure_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+    if os.getenv("AZURE_STORAGE_CONTAINER_NAME"):
+        config.storage.azure_container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "document").strip()
+    if os.getenv("AZURE_STORAGE_BLOB_PREFIX"):
+        config.storage.azure_blob_prefix = os.getenv("AZURE_STORAGE_BLOB_PREFIX", "sessions").strip()
+    if config.storage.azure_connection_string and config.storage.provider in ("azure", "azure_blob", "blob"):
+        config.storage.enabled = True
+        config.storage.provider = "azure_blob"
+    if config.storage.azure_connection_string and config.storage.provider == "local":
+        config.storage.enabled = True
+        config.storage.provider = "azure_blob"
+
+    if os.getenv("AUTH_SECRET_KEY"):
+        config.auth.secret_key = os.getenv("AUTH_SECRET_KEY", "change-me-in-production")
+    if os.getenv("AUTH_ACCESS_TOKEN_TTL_MINUTES"):
+        config.auth.access_token_ttl_minutes = int(os.getenv("AUTH_ACCESS_TOKEN_TTL_MINUTES", "10080"))
+    if os.getenv("AUTH_REQUIRE_LOGIN"):
+        config.auth.require_auth = os.getenv("AUTH_REQUIRE_LOGIN").lower() == "true"
 
     # 调试模式
     if os.getenv("DEBUG"):

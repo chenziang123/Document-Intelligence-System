@@ -44,6 +44,7 @@ def persist_workflow_execute_begin(
     cfg = config or get_config()
     task_id = _task_business_id(spec)
     spec.parameters["task_id"] = task_id
+    spec.parameters["task_uuid"] = None
 
     if not cfg.database.enabled or not is_database_configured(cfg):
         return task_id
@@ -60,6 +61,7 @@ def persist_workflow_execute_begin(
                     "source": "workflow_coordinator",
                 },
             )
+            spec.parameters["task_uuid"] = str(tu)
             insert_task_step(
                 conn,
                 tu,
