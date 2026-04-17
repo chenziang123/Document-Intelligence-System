@@ -61,6 +61,7 @@ htmlcov/
 
 # 忽略前端依赖
 frontend/node_modules/
+extended-frontend/node_modules/
 
 # 再次确保 .env 文件被忽略
 .env
