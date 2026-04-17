@@ -104,6 +104,9 @@ async def execute_task(task: TaskSpec):
 @router.post("/mixed-fill")
 async def mixed_fill(request: MixedFillRequest, authorization: str | None = Header(default=None)):
     """统一填表：将mixed模式合并实体写入一个模板（xlsx/docx）。"""
+    import shutil
+    from pathlib import Path
+
     from core.agents.agent_d import run_agent_d_fill_from_entities
 
     cfg = load_config()
@@ -120,46 +123,83 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
 
         raise HTTPException(status_code=401, detail="需要登录后访问")
 
+    session = get_session_by_id(request.session_id, config=cfg, user_id=current_user.id if current_user else None)
+    if not session:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    uploads_dir = Path("workspace/uploads") / request.session_id
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    template_source = Path(request.template_file)
+    if not template_source.exists():
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"模板文件不存在: {template_source}")
+
+    if "workspace/temp_uploads" in str(template_source):
+        template_dest = uploads_dir / template_source.name
+        shutil.copy2(template_source, template_dest)
+        effective_template = str(template_dest)
+    else:
+        effective_template = str(template_source.resolve())
+
+    output_template_path = str(uploads_dir / f"{Path(effective_template).stem}_filled{Path(effective_template).suffix}")
+    output_json_path = str(uploads_dir / f"{Path(effective_template).stem}_merged_rows.json")
+
     result = run_agent_d_fill_from_entities(
         entities=request.entities,
-        template=request.template_file,
-        output_json=request.output_json,
-        output_template=request.output_template,
+        template=effective_template,
+        output_json=output_json_path,
+        output_template=output_template_path,
         template_sheet_name=request.template_sheet_name,
         template_header_row=request.template_header_row,
         template_start_row=request.template_start_row,
         template_table_index=request.template_table_index,
     )
-    output_path = result.get("data", {}).get("output_template") if isinstance(result, dict) else None
-    if output_path:
-        try:
-            from pathlib import Path
 
-            path_obj = Path(str(output_path))
-            if path_obj.exists():
+    output_template_file = result.get("data", {}).get("template_output") if isinstance(result, dict) else None
+    output_json_file = result.get("data", {}).get("output_json") if isinstance(result, dict) else None
+
+    file_ids = []
+    for candidate in [output_template_file, output_json_file]:
+        if not candidate:
+            continue
+        path_obj = Path(str(candidate))
+        if not path_obj.exists():
+            continue
+        try:
+            if path_obj.parent != uploads_dir.resolve():
+                dest = uploads_dir / path_obj.name
+                shutil.copy2(path_obj, dest)
+                path_obj = dest
+            storage_key = None
+            try:
+                storage_key = upload_file_to_storage(
+                    path_obj,
+                    config=cfg,
+                    blob_name=build_blob_name(request.session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
+                )
+            except Exception:
                 storage_key = None
-                try:
-                    storage_key = upload_file_to_storage(
-                        path_obj,
-                        config=cfg,
-                        blob_name=build_blob_name(session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
-                    )
-                except Exception:
-                    storage_key = None
-                session = get_session_by_id(request.session_id, config=cfg, user_id=current_user.id if current_user else None)
-                if session:
-                    add_session_file(
-                        session_id=request.session_id,
-                        file_name=path_obj.name,
-                        file_type=path_obj.suffix.lower().lstrip(".") or "output",
-                        file_path=str(path_obj),
-                        file_size=path_obj.stat().st_size,
-                        config=cfg,
-                        user_id=current_user.id if current_user else None,
-                        source="generated",
-                        role="output",
-                        storage_key=storage_key,
-                    )
+            session_file = add_session_file(
+                session_id=request.session_id,
+                file_name=path_obj.name,
+                file_type=path_obj.suffix.lower().lstrip(".") or "output",
+                file_path=str(path_obj),
+                file_size=path_obj.stat().st_size,
+                config=cfg,
+                user_id=current_user.id if current_user else None,
+                source="generated",
+                role="output",
+                storage_key=storage_key,
+            )
+            file_ids.append({"file_id": session_file.id, "file_name": path_obj.name, "file_path": str(path_obj)})
         except Exception:
-            pass
+            continue
+
+    if isinstance(result, dict) and "data" in result:
+        result["data"]["file_ids"] = file_ids
+
     return result

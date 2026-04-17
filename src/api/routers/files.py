@@ -261,35 +261,36 @@ async def download_file(session_id: str, file_id: int, authorization: Optional[s
     """下载文件"""
     cfg = load_config()
     current_user = _resolve_current_user(authorization, cfg)
-    
+
     files = get_session_files(session_id, config=cfg, user_id=current_user.id if current_user else None)
     file_info = next((f for f in files if f.id == file_id), None)
-    
+
     if not file_info:
         raise HTTPException(status_code=404, detail="文件不存在")
-    
-    background_task = None
-    storage_key = getattr(file_info, "storage_key", None)
+
+    storage_key = getattr(file_info, "storage_key", None) or ""
+    file_path = None
+
     if storage_key and cfg.storage.enabled and cfg.storage.provider == "azure_blob":
         cache_path = Path(cfg.temp_dir) / "azure_blob_cache" / storage_key
         try:
             file_path = download_file_to_local(storage_key, cache_path, config=cfg)
-            background_task = BackgroundTask(
-                _cleanup_blob_cache_file,
-                file_path,
-                Path(cfg.temp_dir) / "azure_blob_cache",
-            )
         except Exception:
             raise HTTPException(status_code=404, detail="文件不存在")
-    else:
+    elif file_info.file_path:
+        local_path = Path(file_info.file_path)
+        if local_path.exists():
+            file_path = local_path
+        else:
+            raise HTTPException(status_code=404, detail="文件不存在")
+
+    if not file_path:
         raise HTTPException(status_code=404, detail="文件不存在")
-    
-    from fastapi.responses import FileResponse
+
     return FileResponse(
         path=str(file_path),
         filename=file_info.file_name,
         media_type="application/octet-stream",
-        background=background_task,
     )
 
 

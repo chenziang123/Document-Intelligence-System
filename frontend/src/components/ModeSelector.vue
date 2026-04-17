@@ -18,7 +18,7 @@ const fixedModes = [
   { id: 'mixed', name: '混合模式' },
 ]
 
-const allModes = computed(() => [...fixedModes, ...sessionStore.modes])
+const allModes = computed(() => [...sessionStore.modes, ...fixedModes])
 </script>
 
 <template>

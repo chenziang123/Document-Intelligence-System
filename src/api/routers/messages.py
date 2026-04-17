@@ -218,7 +218,11 @@ def _message_to_dict(m) -> Dict[str, Any]:
     }
 
 
-def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], payload: Dict[str, Any]) -> None:
+def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """将生成的文件持久化到 uploads 目录并记录到数据库，返回文件信息列表。"""
+    uploads_dir = Path("workspace/uploads") / session_id
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    saved_files: List[Dict[str, Any]] = []
     candidate_paths = []
     for key in ("excel_path", "template_output", "output_json"):
         value = payload.get(key)
@@ -229,33 +233,34 @@ def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], paylo
             path_obj = Path(candidate)
             if not path_obj.exists():
                 continue
+            dest_path = uploads_dir / path_obj.name
+            import shutil
+            shutil.copy2(path_obj, dest_path)
             storage_key = None
             try:
                 storage_key = upload_file_to_storage(
-                    path_obj,
+                    dest_path,
                     config=cfg,
-                    blob_name=build_blob_name(session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
+                    blob_name=build_blob_name(session_id, dest_path.name, prefix=cfg.storage.azure_blob_prefix),
                 )
             except Exception:
                 storage_key = None
-            add_session_file(
+            session_file = add_session_file(
                 session_id=session_id,
-                file_name=path_obj.name,
-                file_type="generated",
-                file_path=storage_key or "",
-                file_size=path_obj.stat().st_size,
+                file_name=dest_path.name,
+                file_type=dest_path.suffix.lower().lstrip(".") or "output",
+                file_path=str(dest_path),
+                file_size=dest_path.stat().st_size,
                 config=cfg,
                 user_id=user_id,
                 source="generated",
                 role="output",
                 storage_key=storage_key,
             )
-            try:
-                path_obj.unlink(missing_ok=True)
-            except Exception:
-                pass
+            saved_files.append({"file_id": session_file.id, "file_name": dest_path.name, "file_path": str(dest_path)})
         except Exception:
             continue
+    return saved_files
 
 
 def _collect_new_generated_files(session_id: str, cfg, user_id: Optional[str], before_ids: set[int]) -> List[Dict[str, Any]]:
@@ -337,6 +342,9 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
                 allow_rule_fallback=True,
             )
             table_filling_data = _flatten_table_filling_response(response)
+            saved = _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
+            if saved:
+                table_filling_data["generated_files"] = saved
             ai_msg = add_message(
                 session_id,
                 "assistant",
@@ -345,7 +353,6 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
                 config=cfg,
                 user_id=current_user.id if current_user else None,
             )
-            _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
             return SendMessageResponse(
                 message_id=ai_msg.id,
                 content=ai_msg.content,
@@ -553,9 +560,11 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     )
                     table_filling_data = _flatten_table_filling_response(response)
                     full_response = json.dumps(table_filling_data, ensure_ascii=False)
+                    saved = _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
+                    if saved:
+                        table_filling_data["generated_files"] = saved
                     await manager.send_json(session_id, {"type": "chunk", "content": full_response, "result_type": "table_filling"})
                     add_message(session_id, "assistant", table_filling_data.get("message", ""), {"mode": mode, "tableFillingData": table_filling_data}, config=cfg, user_id=current_user.id if current_user else None)
-                    _persist_generated_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
                     await manager.send_json(session_id, {"type": "done"})
                     continue
             elif client_files or client_templates:

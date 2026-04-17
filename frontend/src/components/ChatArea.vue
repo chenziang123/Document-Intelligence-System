@@ -108,6 +108,7 @@ function renderAssistant(msg) {
 function generatedFilesFromMessage(msg) {
   if (!msg || msg.role !== 'assistant') return []
   if (Array.isArray(msg.generatedFiles)) return msg.generatedFiles
+  if (Array.isArray(msg.tableFillingData?.generatedFiles)) return msg.tableFillingData.generatedFiles
   const fromMeta = msg.metadata?.generated_files
   return Array.isArray(fromMeta) ? fromMeta : []
 }
@@ -294,9 +295,24 @@ onUnmounted(() => {
                 </div>
                 <!-- 下载按钮 -->
                 <div class="flex items-center gap-2 mt-2">
-                  <!-- 填表文件下载 -->
+                  <!-- 通过 file_id 下载（数据库持久化文件） -->
+                  <template v-if="msg.tableFillingData?.generatedFiles?.length > 0">
+                    <n-button
+                      v-for="f in msg.tableFillingData.generatedFiles"
+                      :key="f.file_id"
+                      size="tiny"
+                      type="primary"
+                      @click="downloadGeneratedFile(f)"
+                    >
+                      <template #icon>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      </template>
+                      下载 {{ f.file_name || '生成文件' }}
+                    </n-button>
+                  </template>
+                  <!-- 兼容：通过路径下载（文件可能不存在时隐藏） -->
                   <n-button
-                    v-if="msg.tableFillingData.template_output"
+                    v-if="msg.tableFillingData.template_output && !msg.tableFillingData?.generatedFiles?.length"
                     size="tiny"
                     type="success"
                     @click="downloadTableFillingFile(msg.tableFillingData.template_output)"
@@ -306,9 +322,8 @@ onUnmounted(() => {
                     </template>
                     下载填表文件
                   </n-button>
-                  <!-- 筛选行 JSON 下载 -->
                   <n-button
-                    v-if="msg.tableFillingData.output_json"
+                    v-if="msg.tableFillingData.output_json && !msg.tableFillingData?.generatedFiles?.length"
                     size="tiny"
                     @click="downloadFilteredJson(msg)"
                   >

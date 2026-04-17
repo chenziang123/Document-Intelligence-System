@@ -9,6 +9,15 @@ import AuthPanel from './components/AuthPanel.vue'
 import { useSessionStore } from './stores/sessionStore'
 
 const sessionStore = useSessionStore()
+const showFilePanel = computed(() => {
+  return sessionStore.currentModeConfig.requiresData !== false ||
+         sessionStore.currentModeConfig.requiresTemplate !== false
+})
+
+const filePanelCollapsed = ref(false)
+function toggleFilePanel() {
+  filePanelCollapsed.value = !filePanelCollapsed.value
+}
 onMounted(() => {
   sessionStore.init()
 })
@@ -113,8 +122,36 @@ async function handleLogout() {
             </div>
 
             <!-- 文件面板 -->
-            <div class="border-b bg-gray-50 px-4 py-3 max-h-48 overflow-y-auto">
-              <FilePanel />
+            <div v-if="showFilePanel" class="border-b bg-gray-50">
+              <!-- 折叠/展开按钮 -->
+              <div class="flex items-center px-4 py-2">
+                <button
+                  @click="toggleFilePanel"
+                  class="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="w-4 h-4 transition-transform duration-200"
+                    :class="{ 'rotate-180': filePanelCollapsed }"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="18 15 12 9 6 15"/>
+                  </svg>
+                  <span>文件上传</span>
+                </button>
+              </div>
+              <!-- 文件面板内容 -->
+              <div
+                v-show="!filePanelCollapsed"
+                class="px-4 pb-3 max-h-48 overflow-y-auto"
+              >
+                <FilePanel />
+              </div>
             </div>
 
             <!-- 聊天区域 -->

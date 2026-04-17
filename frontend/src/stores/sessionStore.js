@@ -1083,6 +1083,9 @@ export const useSessionStore = defineStore('session', () => {
             message: mixedFillResp?.message || '统一填表完成',
             ...(mixedFillResp?.data || {}),
           }
+          if (Array.isArray(mixedFillResp?.data?.file_ids) && mixedFillResp.data.file_ids.length > 0) {
+            payload.generatedFiles = mixedFillResp.data.file_ids
+          }
 
           messages.value.push({
             id: Date.now() + 998,

@@ -12,10 +12,14 @@ const isUploading = computed(() => uploadingCount.value > 0)
 const tempDataFiles = computed(() => sessionStore.tempDataFiles)
 const tempTemplateFiles = computed(() => sessionStore.tempTemplateFiles)
 
+// 根据当前模式判断是否需要显示数据文件
+const showDataTab = computed(() => {
+  return sessionStore.currentModeConfig.requiresData !== false
+})
+
 // 根据当前模式判断是否需要显示模板
 const showTemplateTab = computed(() => {
   const config = sessionStore.currentModeConfig
-  // 只要模式需要模板（必需或可选），就显示模板Tab
   return config.requiresTemplate !== false
 })
 
@@ -24,7 +28,16 @@ const templateRequired = computed(() => {
   return sessionStore.currentModeConfig.requiresTemplate === true
 })
 
+// 整个上传区域是否显示
+const showUploadPanel = computed(() => {
+  return showDataTab.value || showTemplateTab.value
+})
+
 const hasTemplateWarning = computed(() => {
+  // table_filling 模式下不显示警告
+  if (sessionStore.currentMode === 'table_filling') {
+    return null
+  }
   if (templateRequired.value && sessionStore.selectedTempTemplateFiles.length === 0) {
     return 'warning'
   }
@@ -84,7 +97,7 @@ async function handleUploadRequest(options, fileType) {
 </script>
 
 <template>
-  <div>
+  <div v-if="showUploadPanel">
     <!-- 警告提示 -->
     <n-alert
       v-if="hasTemplateWarning"
@@ -97,7 +110,7 @@ async function handleUploadRequest(options, fileType) {
     </n-alert>
 
     <!-- 数据文件 -->
-    <div class="mb-3">
+    <div v-if="showDataTab" class="mb-3">
       <div class="flex items-center justify-between mb-2">
         <span class="text-sm font-medium text-gray-700">
           数据文件
