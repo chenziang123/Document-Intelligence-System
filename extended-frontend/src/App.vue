@@ -47,9 +47,12 @@ function closeBatchModal() {
 
       <main class="main-content">
         <LibraryView v-if="tabStore.currentTab === 'library'" />
-        <ChatView v-else-if="tabStore.currentTab === 'chat'" />
+        <!-- keep-alive：避免每次从文档库切回时整页销毁/重建 ChatView（WebSocket 重连 + 全量 Markdown 重算导致卡顿） -->
+        <keep-alive>
+          <ChatView v-if="tabStore.currentTab === 'chat'" />
+        </keep-alive>
         <WorkflowView
-          v-else-if="tabStore.currentTab === 'workflow'"
+          v-if="tabStore.currentTab === 'workflow'"
           @open-batch-modal="openBatchModal"
         />
       </main>

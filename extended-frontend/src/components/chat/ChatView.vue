@@ -1,4 +1,6 @@
 <script setup>
+defineOptions({ name: 'ChatView' })
+
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { marked } from 'marked'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -176,6 +178,13 @@ function getFileExt(fileName) {
 }
 
 function downloadResultFile(fileInfo) {
+  const sid = sessionStore.currentSessionId
+  if (fileInfo?.file_id && sid) {
+    const url = `/api/sessions/${encodeURIComponent(sid)}/files/${encodeURIComponent(fileInfo.file_id)}/download`
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+  if (!fileInfo?.file_path) return
   const url = `/api/files/download?path=${encodeURIComponent(fileInfo.file_path)}`
   const a = document.createElement('a')
   a.href = url
@@ -218,6 +227,109 @@ function downloadEntitiesJson(msg) {
   a.download = 'extraction_result.json'
   a.click()
   URL.revokeObjectURL(url)
+}
+
+/** WebSocket 写在根上；历史消息可能在 metadata.tableFillingData */
+function getTableFillingData(msg) {
+  if (!msg || msg.role !== 'assistant') return null
+  return msg.tableFillingData ?? msg.metadata?.tableFillingData ?? null
+}
+
+function getTableFillDownloadFiles(msg) {
+  const tf = getTableFillingData(msg)
+  if (Array.isArray(tf?.generated_files) && tf.generated_files.length) return tf.generated_files
+  if (Array.isArray(msg?.generated_files) && msg.generated_files.length) return msg.generated_files
+  return []
+}
+
+const TABLE_PREVIEW_MAX_ROWS = 50
+
+function tablePreviewRows(tf) {
+  if (!tf || typeof tf !== 'object') return []
+  const a = tf.previewData
+  const b = tf.filtered_rows
+  if (Array.isArray(a) && a.length) return a
+  if (Array.isArray(b) && b.length) return b
+  return []
+}
+
+function tablePreviewDisplayRows(tf) {
+  return tablePreviewRows(tf).slice(0, TABLE_PREVIEW_MAX_ROWS)
+}
+
+function tablePreviewExtraCount(tf) {
+  const n = tablePreviewRows(tf).length
+  return n > TABLE_PREVIEW_MAX_ROWS ? n - TABLE_PREVIEW_MAX_ROWS : 0
+}
+
+function tablePreviewColumns(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return []
+  const ordered = []
+  const seen = new Set()
+  const first = rows[0]
+  if (first && typeof first === 'object' && !Array.isArray(first)) {
+    for (const k of Object.keys(first)) {
+      ordered.push(k)
+      seen.add(k)
+    }
+  }
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+    for (const k of Object.keys(row)) {
+      if (!seen.has(k)) {
+        seen.add(k)
+        ordered.push(k)
+      }
+    }
+  }
+  return ordered
+}
+
+function formatTablePreviewCell(val) {
+  if (val === null || val === undefined || val === '') return '—'
+  if (typeof val === 'object') {
+    try {
+      return JSON.stringify(val)
+    } catch {
+      return String(val)
+    }
+  }
+  return String(val)
+}
+
+/** 每条助手消息最多算一次预览结构，避免模板里对每格重复 tablePreviewColumns */
+function buildTableFillPreviewBundle(msg) {
+  const tf = getTableFillingData(msg)
+  if (!tf || tf.success === undefined) return null
+  const rows = tablePreviewRows(tf)
+  if (!rows.length) return null
+  const columns = tablePreviewColumns(rows)
+  const displayRows = rows.slice(0, TABLE_PREVIEW_MAX_ROWS)
+  const extra = Math.max(0, rows.length - TABLE_PREVIEW_MAX_ROWS)
+  return { tf, columns, displayRows, totalRows: rows.length, extra }
+}
+
+const tableFillPreviewByMessageKey = computed(() => {
+  const list = sessionStore.messages
+  const out = {}
+  for (let i = 0; i < list.length; i++) {
+    const msg = list[i]
+    if (msg.role !== 'assistant') continue
+    const key = msg.id != null && msg.id !== '' ? String(msg.id) : `_i_${i}`
+    const b = buildTableFillPreviewBundle(msg)
+    if (b) out[key] = b
+  }
+  return out
+})
+
+function tablePreviewBundleFor(msg, index) {
+  const key = msg.id != null && msg.id !== '' ? String(msg.id) : `_i_${index}`
+  return tableFillPreviewByMessageKey.value[key] || null
+}
+
+function tablePreviewBundleList(msg, index) {
+  const b = tablePreviewBundleFor(msg, index)
+  return b ? [b] : []
 }
 
 function getFileStyle(fileName) {
@@ -294,7 +406,7 @@ function userMessageAttachments(msg) {
 
         <div
           v-for="(msg, index) in sessionStore.messages"
-          :key="msg.id || index"
+          :key="msg.id != null ? msg.id : `m-${index}`"
           class="message"
           :class="msg.role"
         >
@@ -346,16 +458,79 @@ function userMessageAttachments(msg) {
             <!-- 助手消息 -->
             <div v-else class="message-bubble" :class="{ 'md-content': msg.role === 'assistant' }">
               <div v-if="msg.role === 'assistant'" v-html="renderMarkdown(msg.content)"></div>
-              <!-- 表格填表结果下载按钮 -->
-              <div v-if="msg.tableFillingData?.generated_files?.length" class="table-result-actions">
-                <div class="result-label">📥 生成结果：</div>
-                <div v-for="f in msg.tableFillingData.generated_files" :key="f.file_id" class="result-file-item">
-                  <span class="result-file-name">📎 {{ f.file_name }}</span>
-                  <button class="download-btn" @click="downloadResultFile(f)">下载</button>
+              <!-- 表格填表预览：每条消息只取一次 bundle（computed 预聚合 + 单次 list 迭代） -->
+              <template v-for="tb in tablePreviewBundleList(msg, index)" :key="(msg.id != null ? msg.id : index) + '-tbl'">
+                <div class="entity-preview table-fill-preview">
+                  <div class="entity-preview-header">
+                    <div>
+                      <span class="entity-preview-title">
+                        📋 表格结果预览（{{ tb.totalRows }} 行）
+                      </span>
+                      <span v-if="tb.tf.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
+                        命中 {{ tb.tf.matched_rows }}/{{ tb.tf.total_rows ?? '—' }} 行
+                      </span>
+                    </div>
+                    <div v-if="getTableFillDownloadFiles(msg).length" class="entity-preview-actions">
+                      <button
+                        v-for="f in getTableFillDownloadFiles(msg)"
+                        :key="f.file_id ?? f.file_path"
+                        class="entity-action-btn"
+                        type="button"
+                        @click="downloadResultFile(f)"
+                      >
+                        {{ getFileExt(f.file_name) }} ↓
+                      </button>
+                    </div>
+                  </div>
+                  <div class="entity-table-wrapper">
+                    <table class="entity-table">
+                      <thead>
+                        <tr>
+                          <th v-for="col in tb.columns" :key="col">
+                            {{ col }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, ri) in tb.displayRows" :key="ri">
+                          <td
+                            v-for="col in tb.columns"
+                            :key="col"
+                            :title="formatTablePreviewCell(row && row[col] !== undefined ? row[col] : '')"
+                          >
+                            {{ formatTablePreviewCell(row && row[col] !== undefined ? row[col] : '') }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-if="tb.extra > 0" class="entity-preview-more">
+                    还有 {{ tb.extra }} 行未展示，请下载生成文件查看全部
+                  </div>
+                </div>
+              </template>
+              <!-- 仅表格填表：无 previewData 时仍要下载；勿用 getTableFillDownloadFiles 单独判断，否则无 tableFillingData 时会误用 msg.generated_files 与实体提取重复 -->
+              <div
+                v-if="getTableFillingData(msg) && getTableFillDownloadFiles(msg).length && !tablePreviewBundleFor(msg, index)"
+                class="entity-preview table-fill-preview table-fill-downloads-only"
+              >
+                <div class="entity-preview-header">
+                  <span class="entity-preview-title">📋 生成结果</span>
+                  <div class="entity-preview-actions">
+                    <button
+                      v-for="f in getTableFillDownloadFiles(msg)"
+                      :key="f.file_id ?? f.file_path"
+                      class="entity-action-btn"
+                      type="button"
+                      @click="downloadResultFile(f)"
+                    >
+                      {{ getFileExt(f.file_name) }} ↓
+                    </button>
+                  </div>
                 </div>
               </div>
-              <!-- 实体提取结果：表格预览 -->
-              <div v-if="msg.entitiesData?.length" class="entity-preview">
+              <!-- 实体提取结果：表格预览（与表格填表共用 table-fill-preview 表头/表体样式） -->
+              <div v-if="msg.entitiesData?.length" class="entity-preview table-fill-preview">
                 <div class="entity-preview-header">
                   <span class="entity-preview-title">📊 提取结果预览（共 {{ msg.entitiesData.length }} 条）</span>
                   <div class="entity-preview-actions">
@@ -384,12 +559,18 @@ function userMessageAttachments(msg) {
                   还有 {{ msg.entitiesData.length - 20 }} 条数据，下载完整文件查看全部
                 </div>
               </div>
-              <!-- 仅文件下载（没有表格数据时） -->
-              <div v-else-if="msg.generated_files?.length" class="entity-preview-header">
-                <div class="entity-preview-actions">
-                  <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
-                    {{ getFileExt(f.file_name) }} ↓
-                  </button>
+              <!-- 仅文件下载：实体提取等场景；表格填表已在上方标题栏处理，勿与 msg.generated_files 再渲一排 -->
+              <div
+                v-else-if="msg.generated_files?.length && !getTableFillingData(msg)"
+                class="entity-preview table-fill-preview table-fill-downloads-only"
+              >
+                <div class="entity-preview-header">
+                  <span class="entity-preview-title">📊 生成结果</span>
+                  <div class="entity-preview-actions">
+                    <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
+                      {{ getFileExt(f.file_name) }} ↓
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -625,48 +806,6 @@ function userMessageAttachments(msg) {
   50% { opacity: 0.5; }
 }
 
-/* 表格填表结果下载 */
-.table-result-actions {
-  margin-top: 12px;
-  padding: 10px;
-  background: #f0fdf4;
-  border-radius: 8px;
-  border: 1px solid #bbf7d0;
-}
-
-.result-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #166534;
-  margin-bottom: 6px;
-}
-
-.result-file-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 0;
-}
-
-.result-file-name {
-  font-size: 13px;
-  color: #166534;
-}
-
-.download-btn {
-  background: #10b981;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.download-btn:hover {
-  background: #059669;
-}
-
 /* ============ 实体提取表格预览 ============ */
 .entity-preview {
   margin-top: 12px;
@@ -763,5 +902,53 @@ function userMessageAttachments(msg) {
   color: #6b7280;
   background: white;
   border-top: 1px solid #e5e7eb;
+}
+
+.table-fill-preview {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.table-fill-preview .entity-preview-header {
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+}
+
+.table-fill-preview .entity-preview-title {
+  color: #78350f;
+}
+
+.table-fill-preview .entity-table th {
+  background: #fef3c7;
+  color: #78350f;
+  border-bottom: 1px solid #fcd34d;
+  border-right: 1px solid #fde68a;
+}
+
+.table-fill-preview .entity-table td {
+  border-bottom: 1px solid #fef3c7;
+  border-right: 1px solid #fefce8;
+  background: #ffffff;
+}
+
+.table-fill-preview .entity-table tbody tr:hover td {
+  background: #fff7ed;
+}
+
+.table-fill-preview .entity-preview-more {
+  background: #fffbeb;
+  border-top: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.table-fill-stats {
+  font-size: 12px;
+  color: #92400e;
+  white-space: nowrap;
+}
+
+.table-fill-stats-inline {
+  margin-left: 8px;
+  font-weight: 500;
 }
 </style>

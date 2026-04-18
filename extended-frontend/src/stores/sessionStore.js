@@ -153,17 +153,15 @@ export const useSessionStore = defineStore('session', () => {
           is_selected: true,
           created_at: res.created_at || new Date().toISOString(),
         }
-        // 更新 tempFiles
+        // 更新 tempFiles（缓冲区内条目替换为已上传后的元数据）
         const index = fileStore.tempFiles.data.findIndex(f => f.id === file.id)
         if (index > -1) {
+          const prev = fileStore.tempFiles.data[index]
+          const u = prev?.file_url
+          if (u && String(u).startsWith('blob:')) {
+            try { URL.revokeObjectURL(u) } catch (_) {}
+          }
           fileStore.tempFiles.data[index] = updatedFileInfo
-        }
-        // 同时更新 uploadedFiles（移除旧记录，添加新记录）
-        const uploadedIndex = fileStore.uploadedFiles.data.findIndex(f => f.id === file.id || f.id === res.id)
-        if (uploadedIndex > -1) {
-          fileStore.uploadedFiles.data[uploadedIndex] = updatedFileInfo
-        } else {
-          fileStore.uploadedFiles.data.push(updatedFileInfo)
         }
         console.log('[uploadTempFiles] 文件路径:', filePath)
         uploadedFiles.push(updatedFileInfo)
@@ -193,14 +191,12 @@ export const useSessionStore = defineStore('session', () => {
           created_at: res.created_at || new Date().toISOString(),
         }
         if (index > -1) {
+          const prev = fileStore.tempFiles.template[index]
+          const u = prev?.file_url
+          if (u && String(u).startsWith('blob:')) {
+            try { URL.revokeObjectURL(u) } catch (_) {}
+          }
           fileStore.tempFiles.template[index] = updatedTemplateInfo
-        }
-        // 同时更新 uploadedFiles
-        const uploadedIndex = fileStore.uploadedFiles.template.findIndex(f => f.id === file.id || f.id === res.id)
-        if (uploadedIndex > -1) {
-          fileStore.uploadedFiles.template[uploadedIndex] = updatedTemplateInfo
-        } else {
-          fileStore.uploadedFiles.template.push(updatedTemplateInfo)
         }
         console.log('[uploadTempFiles] 模板文件路径:', filePath)
         uploadedTemplateFiles.push(updatedTemplateInfo)
@@ -213,65 +209,15 @@ export const useSessionStore = defineStore('session', () => {
     return { uploadedFiles, uploadedTemplateFiles }
   }
 
-  // 清除所有选中的文件
+  // 清除所有选中的文件（仅本地缓冲区，不请求后端）
   function clearAllSelectedFiles() {
     const fileStore = useFileStore()
     fileStore.tempFiles.data.forEach(f => { f.is_selected = false })
     fileStore.tempFiles.template.forEach(f => { f.is_selected = false })
-    fileStore.uploadedFiles.data.forEach(f => { f.is_selected = false })
-    fileStore.uploadedFiles.template.forEach(f => { f.is_selected = false })
-    // 同步到服务器
-    syncFileSelectionToServer()
   }
 
-  // 同步文件勾选状态到服务器
-  async function syncFileSelectionToServer() {
-    if (!currentSessionId.value) return
-    try {
-      const fileStore = useFileStore()
-      const tasks = []
-      const selections = []
-      
-      console.log('[syncFileSelectionToServer] 开始同步文件勾选状态')
-      console.log('[syncFileSelectionToServer] uploadedFiles.data:', fileStore.uploadedFiles.data)
-      console.log('[syncFileSelectionToServer] uploadedFiles.template:', fileStore.uploadedFiles.template)
-      
-      fileStore.uploadedFiles.data.forEach(f => {
-        selections.push({ file_id: f.id, is_selected: f.is_selected })
-      })
-      fileStore.uploadedFiles.template.forEach(f => {
-        selections.push({ file_id: f.id, is_selected: f.is_selected })
-      })
-      
-      console.log('[syncFileSelectionToServer] 准备同步的 selections:', selections)
-      
-      if (selections.length > 0) {
-        try {
-          await fileApi.updateSelection(currentSessionId.value, selections)
-          console.log('[syncFileSelectionToServer] 同步成功')
-        } catch (e) {
-          console.error('[syncFileSelectionToServer] 同步失败:', e)
-        }
-      }
-    } catch (e) {
-      console.error('[syncFileSelectionToServer] 同步文件勾选状态失败:', e)
-    }
-  }
-
-  // 从数据库加载文件列表
-  async function loadFiles(sessionId) {
-    try {
-      const res = await fileApi.list(sessionId)
-      const fileStore = useFileStore()
-      fileStore.uploadedFiles.data = res.data_files || []
-      fileStore.uploadedFiles.template = res.template_files || []
-      // 同步到 tempFiles
-      fileStore.tempFiles.data = [...fileStore.uploadedFiles.data]
-      fileStore.tempFiles.template = [...fileStore.uploadedFiles.template]
-    } catch (e) {
-      console.error('加载文件失败:', e)
-    }
-  }
+  /** 上传区不展示/同步会话服务端文件列表，保留空实现以兼容创建/切换会话时的调用 */
+  async function loadFiles(_sessionId) {}
 
   const currentSession = computed(() =>
     sessions.value.find(s => s.session_id === currentSessionId.value)
@@ -604,6 +550,10 @@ export const useSessionStore = defineStore('session', () => {
           const lastMsg = messages.value[messages.value.length - 1]
           if (lastMsg && lastMsg.role === 'assistant') {
             lastMsg.generated_files = data.generated_files
+            // 表格填表 chunk 与 done 分开发字段时，合并进 tableFillingData 便于前端统一展示/下载
+            if (lastMsg.tableFillingData && typeof lastMsg.tableFillingData === 'object') {
+              lastMsg.tableFillingData.generated_files = data.generated_files
+            }
           }
         }
         if (currentSessionId.value) {

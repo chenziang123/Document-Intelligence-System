@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from config import load_config
 from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import (
     add_message,
@@ -200,6 +200,91 @@ def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
         "multi_table_results": data.get("multi_table_results") if isinstance(data, dict) else None,
         "resolved_input": resolved_input,
     }
+
+
+def _resolve_workspace_file(path_str: Optional[str]) -> Optional[Path]:
+    """解析 Agent 输出的 workspace 相对路径或绝对路径，存在则返回 Path。"""
+    if not path_str or not str(path_str).strip():
+        return None
+    p = Path(path_str)
+    if not p.is_absolute():
+        p = Path("workspace") / path_str
+    return p if p.exists() else None
+
+
+def _preview_rows_from_json_file(path: Path, max_rows: int) -> List[Dict[str, Any]]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception as e:
+        print(f"[WS] 读取 JSON 预览失败 {path}: {e}")
+        return []
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)][:max_rows]
+    if isinstance(data, dict):
+        inner = data.get("rows") or data.get("filtered_rows") or data.get("entities")
+        if isinstance(inner, list):
+            return [x for x in inner if isinstance(x, dict)][:max_rows]
+    return []
+
+
+def _read_xlsx_preview_rows(xlsx_path: Path, max_rows: int = 40) -> List[Dict[str, Any]]:
+    """从 xlsx 首行表头 + 若干数据行构建前端表格预览。"""
+    rows: List[Dict[str, Any]] = []
+    try:
+        wb = load_workbook(filename=str(xlsx_path), read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            it = ws.iter_rows(values_only=True)
+            first = next(it, None)
+            if first is None:
+                return rows
+            headers: List[str] = []
+            for j, c in enumerate(first):
+                if c is not None and str(c).strip():
+                    headers.append(str(c).strip())
+                else:
+                    headers.append(f"列{j + 1}")
+            count = 0
+            for row in it:
+                count += 1
+                if count > max_rows:
+                    break
+                d: Dict[str, Any] = {}
+                for j, v in enumerate(row):
+                    key = headers[j] if j < len(headers) else f"列{j + 1}"
+                    d[key] = v
+                rows.append(d)
+        finally:
+            wb.close()
+    except Exception as e:
+        print(f"[WS] _read_xlsx_preview_rows 失败 {xlsx_path}: {e}")
+    return rows
+
+
+def _build_table_filling_preview_rows(table_filling_data: Dict[str, Any], max_rows: int = 50) -> List[Dict[str, Any]]:
+    """供 WebSocket / HTTP 在发送给前端前附加 previewData（混合模式表格子任务同路径）。"""
+    oj = table_filling_data.get("output_json")
+    if isinstance(oj, str) and oj.strip():
+        jp = _resolve_workspace_file(oj)
+        if jp and jp.suffix.lower() == ".json":
+            got = _preview_rows_from_json_file(jp, max_rows)
+            if got:
+                return got
+    tpl = table_filling_data.get("template_output")
+    if isinstance(tpl, str) and tpl.strip():
+        tp = _resolve_workspace_file(tpl)
+        if tp and tp.suffix.lower() in (".xlsx", ".xlsm"):
+            got = _read_xlsx_preview_rows(tp, max_rows=max_rows)
+            if got:
+                return got
+    if isinstance(oj, str) and oj.strip():
+        jp = _resolve_workspace_file(oj)
+        if jp and jp.exists():
+            got = _preview_rows_from_json_file(jp, max_rows)
+            if got:
+                return got
+    return []
 
 
 def _normalize_entity_extraction_response(raw_response: str) -> str:
@@ -564,6 +649,9 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
             saved = _save_table_filling_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
             if saved:
                 table_filling_data["generated_files"] = saved
+            preview_rows = _build_table_filling_preview_rows(table_filling_data)
+            if preview_rows:
+                table_filling_data["previewData"] = preview_rows
             ai_msg = add_message(
                 session_id,
                 "assistant",
@@ -789,14 +877,18 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     )
                     print(f"[WS] run_agent_d_api 完成, 响应长度={len(str(response))}")
                     table_filling_data = _flatten_table_filling_response(response)
-                    full_response = json.dumps(table_filling_data, ensure_ascii=False)
-                    print(f"[WS] 发送 table_filling chunk, 内容长度={len(full_response)}")
                     print(f"[WS] table_filling_data before persist: keys={list(table_filling_data.keys())}")
                     print(f"[WS] table_filling_data excel_path={table_filling_data.get('excel_path')} template_output={table_filling_data.get('template_output')} output_json={table_filling_data.get('output_json')}")
                     saved = _save_table_filling_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
                     print(f"[WS] _save_table_filling_files 返回: {saved}")
                     if saved:
                         table_filling_data["generated_files"] = saved
+                    preview_rows = _build_table_filling_preview_rows(table_filling_data)
+                    if preview_rows:
+                        table_filling_data["previewData"] = preview_rows
+                        print(f"[WS] table_filling 附加 previewData 行数={len(preview_rows)}")
+                    full_response = json.dumps(table_filling_data, ensure_ascii=False)
+                    print(f"[WS] 发送 table_filling chunk, 内容长度={len(full_response)}")
                     await manager.send_json(session_id, {"type": "chunk", "content": full_response, "result_type": "table_filling"})
                     add_message(session_id, "assistant", table_filling_data.get("message", ""), {"mode": mode, "tableFillingData": table_filling_data}, config=cfg, user_id=current_user.id if current_user else None)
                     print(f"[WS] 发送 table_filling done")

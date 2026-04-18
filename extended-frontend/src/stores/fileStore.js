@@ -1,18 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import fileApi from '../api/files'
-import { useSessionStore } from './sessionStore'
 
+/**
+ * 聊天「文件上传区」纯属本地缓冲区：只做选中/预览，与后端会话文件列表无关。
+ * 仅在用户发送消息且需要携带附件时，由 sessionStore 临时上传到当前会话。
+ */
 export const useFileStore = defineStore('file', () => {
   const currentFileType = ref('data')
   const filesPanelCollapsed = ref(true)
   const searchQuery = ref('')
   const isUploading = ref(false)
-
-  const uploadedFiles = ref({
-    data: [],
-    template: []
-  })
 
   const tempFiles = ref({
     data: [],
@@ -39,61 +36,43 @@ export const useFileStore = defineStore('file', () => {
   }
 
   async function addFile(type, file) {
-    // 生成唯一ID
     const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
-    
-    // 创建文件对象URL（用于预览）
+
     const fileUrl = URL.createObjectURL(file)
-    
-    // 只保存到临时状态，不上传到服务器
+
     const fileInfo = {
       id: tempId,
       file_name: file.name,
       file_size: file.size,
       file_type: type,
       file_url: fileUrl,
-      original_file: file, // 原始文件对象
+      original_file: file,
       is_selected: true,
       created_at: new Date().toISOString(),
     }
-    
+
     tempFiles.value[type].push(fileInfo)
-    uploadedFiles.value[type].push({ ...fileInfo })
   }
 
   async function removeFile(id, type) {
-    const sessionStore = useSessionStore()
     const index = tempFiles.value[type].findIndex(f => f.id === id)
     if (index > -1) {
       const fileInfo = tempFiles.value[type][index]
-      // 如果是数据库文件，调用 API 删除
-      if (!String(id).startsWith('temp_')) {
+      const url = fileInfo?.file_url
+      if (url && String(url).startsWith('blob:')) {
         try {
-          await fileApi.delete(sessionStore.currentSessionId, id)
-        } catch (e) {
-          console.warn('删除文件失败:', e)
-        }
+          URL.revokeObjectURL(url)
+        } catch (_) {}
       }
-      // 从 tempFiles 中移除
       tempFiles.value[type].splice(index, 1)
-      // 同时从 uploadedFiles 中移除
-      const uploadedIndex = uploadedFiles.value[type].findIndex(f => f.id === id)
-      if (uploadedIndex > -1) {
-        uploadedFiles.value[type].splice(uploadedIndex, 1)
-      }
     }
+    // 不从缓冲区调用后端删除；服务端副本仅在发送消息时按需创建
   }
 
   function toggleFileSelection(id, type, isSelected) {
-    // 更新 tempFiles
     const tempIndex = tempFiles.value[type].findIndex(f => f.id === id)
     if (tempIndex > -1) {
       tempFiles.value[type][tempIndex].is_selected = isSelected
-    }
-    // 同时更新 uploadedFiles
-    const uploadedIndex = uploadedFiles.value[type].findIndex(f => f.id === id)
-    if (uploadedIndex > -1) {
-      uploadedFiles.value[type][uploadedIndex].is_selected = isSelected
     }
   }
 
@@ -132,7 +111,6 @@ export const useFileStore = defineStore('file', () => {
     currentFileType,
     filesPanelCollapsed,
     searchQuery,
-    uploadedFiles,
     tempFiles,
     currentFiles,
     hasDataFiles,
