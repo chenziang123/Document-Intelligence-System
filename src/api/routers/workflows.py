@@ -8,9 +8,11 @@ Workflow API 路由
   GET  /api/workflows/templates       获取工作流模板列表
   GET  /api/workflows/templates/{id}  获取指定模板
   GET  /api/workflows                获取用户工作流列表
-  POST /api/workflows                保存工作流
-  GET  /api/workflows/models          获取可用 LLM 模型
-  GET  /api/workflows/languages       获取支持的目标语言
+  POST /api/workflows                保存工作流（新建或更新）
+  DELETE /api/workflows/{id}         删除工作流
+  GET  /api/workflows/{id}           获取单个工作流完整配置
+  GET  /api/workflows/models         获取可用 LLM 模型
+  GET  /api/workflows/languages      获取支持的目标语言
   GET  /api/workflows/output-formats  获取支持的输出格式
 """
 from __future__ import annotations
@@ -30,6 +32,7 @@ from core.storage import build_blob_name, upload_file_to_storage
 from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import add_session_file, get_session_by_id
 from utils.logger import get_logger
+from workflow_storage import delete_workflow, get_workflow, list_workflows, save_workflow
 
 router = APIRouter(prefix="/api/workflows", tags=["工作流编排"])
 logger = get_logger(__name__)
@@ -469,6 +472,8 @@ def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig)
 
 # ==================== API 端点 ====================
 
+# ⚠️ 路由顺序很重要：精确路径必须在动态路径 {workflow_id} 之前注册
+
 
 @router.post("/execute", response_model=Dict[str, str])
 async def execute_workflow(request: ExecuteRequest, background_tasks: BackgroundTasks):
@@ -495,10 +500,118 @@ async def execute_workflow(request: ExecuteRequest, background_tasks: Background
     return {"execution_id": execution_id}
 
 
-@router.get("", response_model=List[Dict[str, Any]])
-async def list_workflows():
-    """返回空列表（工作流由前端管理），避免 404。"""
-    return []
+# -------- 精确路径端点（必须在 /{workflow_id} 之前） --------
+
+
+@router.get("/templates")
+async def list_templates():
+    """返回内置工作流模板列表（节点含 schemaKey + configValues 默认值）。"""
+    return {"templates": [
+        {
+            "id": "translate-pdf",
+            "name": "PDF 翻译",
+            "description": "将 PDF 文件翻译为目标语言",
+            "nodes": [
+                {
+                    "id": "n_pdf_input",
+                    "type": "input",
+                    "title": "PDF 输入",
+                    "icon": "📕",
+                    "body": "导入 PDF 文件",
+                    "schemaKey": "schema-pdf-input",
+                    "configValues": {
+                        "inputSource": "library",
+                        "spaceId": None,
+                        "skipExisting": False,
+                    }
+                },
+                {
+                    "id": "n_ai_translate",
+                    "type": "ai",
+                    "title": "AI 翻译",
+                    "icon": "🌍",
+                    "body": "使用大模型进行智能翻译处理",
+                    "schemaKey": "schema-translate",
+                    "configValues": {
+                        "targetLanguage": "en",
+                        "prompt": "请将此文档翻译为指定语言，保持原文格式和专业术语的准确性。",
+                    }
+                },
+                {
+                    "id": "n_output",
+                    "type": "output",
+                    "title": "输出文件",
+                    "icon": "📁",
+                    "body": "保存结果到文档库或直接下载",
+                    "schemaKey": "schema-library-output",
+                    "configValues": {
+                        "outputMode": "download",
+                        "targetSpaceId": None,
+                        "namingRule": "{original_name}_translated",
+                        "outputFormat": "pdf",
+                        "notifyOnComplete": True,
+                    }
+                },
+            ],
+        },
+        {
+            "id": "translate-docx",
+            "name": "Word 翻译",
+            "description": "将 Word 文档翻译为目标语言",
+            "nodes": [
+                {
+                    "id": "n_docx_input",
+                    "type": "input",
+                    "title": "DOCX 输入",
+                    "icon": "📘",
+                    "body": "导入 Word 文档",
+                    "schemaKey": "schema-docx-input",
+                    "configValues": {
+                        "inputSource": "library",
+                        "spaceId": None,
+                        "skipExisting": False,
+                    }
+                },
+                {
+                    "id": "n_ai_translate",
+                    "type": "ai",
+                    "title": "AI 翻译",
+                    "icon": "🌍",
+                    "body": "使用大模型进行智能翻译处理",
+                    "schemaKey": "schema-translate",
+                    "configValues": {
+                        "targetLanguage": "en",
+                        "prompt": "请将此文档翻译为指定语言，保持原文格式和专业术语的准确性。",
+                    }
+                },
+                {
+                    "id": "n_output",
+                    "type": "output",
+                    "title": "输出文件",
+                    "icon": "📁",
+                    "body": "保存结果到文档库或直接下载",
+                    "schemaKey": "schema-library-output",
+                    "configValues": {
+                        "outputMode": "download",
+                        "targetSpaceId": None,
+                        "namingRule": "{original_name}_translated",
+                        "outputFormat": "docx",
+                        "notifyOnComplete": True,
+                    }
+                },
+            ],
+        },
+    ]}
+
+
+@router.get("/templates/{template_id}", response_model=TemplateResponse)
+async def get_template(template_id: str):
+    """获取指定模板的完整配置。"""
+    templates = await list_templates()
+    for t in templates:
+        if t["id"] == template_id:
+            return t
+    raise HTTPException(status_code=404, detail="模板不存在")
 
 
 @router.get("/executions/{execution_id}", response_model=ExecutionResponse)
@@ -518,46 +631,6 @@ async def get_execution_status(execution_id: str):
         output_files=state["output_files"],
         error=state["error"],
     )
-
-
-# ==================== 模板与配置查询 ====================
-
-
-@router.get("/templates", response_model=List[TemplateResponse])
-async def list_templates():
-    """返回内置工作流模板列表。"""
-    return [
-        {
-            "id": "translate-pdf",
-            "name": "PDF 翻译",
-            "description": "将 PDF 文件翻译为目标语言",
-            "nodes": [
-                {"type": "input", "title": "PDF 输入", "icon": "📕"},
-                {"type": "ai", "title": "AI 翻译", "icon": "🌍"},
-                {"type": "output", "title": "输出文件", "icon": "📁"},
-            ],
-        },
-        {
-            "id": "translate-docx",
-            "name": "Word 翻译",
-            "description": "将 Word 文档翻译为目标语言",
-            "nodes": [
-                {"type": "input", "title": "DOCX 输入", "icon": "📘"},
-                {"type": "ai", "title": "AI 翻译", "icon": "🌍"},
-                {"type": "output", "title": "输出文件", "icon": "📁"},
-            ],
-        },
-    ]
-
-
-@router.get("/templates/{template_id}", response_model=TemplateResponse)
-async def get_template(template_id: str):
-    """获取指定模板的完整配置。"""
-    templates = await list_templates()
-    for t in templates:
-        if t["id"] == template_id:
-            return t
-    raise HTTPException(status_code=404, detail="模板不存在")
 
 
 @router.get("/models", response_model=List[Dict[str, str]])
@@ -596,3 +669,56 @@ async def list_output_formats():
         {"code": "md", "name": "Markdown"},
         {"code": "txt", "name": "纯文本"},
     ]
+
+
+# -------- 用户工作流 CRUD（/{workflow_id} 必须在最后） --------
+
+
+class SaveWorkflowRequest(BaseModel):
+    id: str = Field(..., description="工作流 ID（唯一标识，新建时由前端生成）")
+    name: str = Field(..., description="工作流名称")
+    icon: str = Field("🔧", description="图标 emoji")
+    type: str = Field("custom", description="类型（custom/template）")
+    nodes: List[Dict[str, Any]] = Field(
+        default_factory=list, description="节点列表（含 configValues 等完整配置）"
+    )
+    config: Dict[str, Any] = Field(default_factory=dict, description="全局配置")
+
+
+@router.get("", response_model=Dict[str, Any])
+async def list_user_workflows():
+    """返回用户自定义工作流列表（不含模板）。"""
+    return {"workflows": list_workflows()}
+
+
+@router.post("", response_model=Dict[str, Any])
+async def save_user_workflow(request: SaveWorkflowRequest):
+    """保存（新建或更新）用户工作流。"""
+    if request.type == "template":
+        raise HTTPException(status_code=400, detail="模板工作流不可通过此接口保存")
+    wf = save_workflow(
+        workflow_id=request.id,
+        name=request.name,
+        icon=request.icon,
+        nodes=request.nodes,
+        config_data=request.config,
+    )
+    return wf
+
+
+@router.get("/{workflow_id}", response_model=Dict[str, Any])
+async def get_single_workflow(workflow_id: str):
+    """获取指定工作流的完整配置（含节点和 config）。"""
+    wf = get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    return wf
+
+
+@router.delete("/{workflow_id}", response_model=Dict[str, bool])
+async def delete_user_workflow(workflow_id: str):
+    """删除指定用户工作流。"""
+    success = delete_workflow(workflow_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="工作流不存在或为模板工作流")
+    return True

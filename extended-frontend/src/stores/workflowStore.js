@@ -216,8 +216,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
           icon: w.icon || '🔧',
           time: _formatTime(w.updated_at || w.created_at),
           type: w.type || 'custom',
-          nodes: w.nodes || [],
-          config: w.config || {}
+          nodes: w.nodes || [],           // 完整节点列表（含 configValues、schemaKey）
+          config: w.config || {},
+          created_at: w.created_at || '',
+          updated_at: w.updated_at || '',
         }
       })
     } catch (e) {
@@ -262,49 +264,91 @@ export const useWorkflowStore = defineStore('workflow', () => {
   function selectWorkflow(workflowId) {
     currentWorkflowId.value = workflowId
     const wf = workflows.value[workflowId]
-    if (wf) {
+
+    if (!wf) {
+      workflowName.value = '未命名'
+      canvasNodes.value = []
+      selectedNodeId.value = null
+      return
+    }
+
+    // 模板工作流（type=template）：nodes 已随 loadTemplates 完整加载，无需调 API
+    if (wf.type === 'template') {
       workflowName.value = wf.name
-      // 加载节点到画布
       canvasNodes.value = (wf.nodes || []).map((n, i) => ({
         ...n,
-        x: 30 + i * 260,
-        y: 160,
-        configValues: n.configValues || {}
+        x: n.x ?? (30 + i * 260),
+        y: n.y ?? 160,
+        configValues: n.configValues || {},
+        schema: n.schema || nodeSchemas.value[n.schemaKey] || null,
       }))
       selectedNodeId.value = null
+      return
     }
+
+    // 用户自定义工作流：从数据库获取完整节点
+    workflowApi.getWorkflow(workflowId).then(res => {
+      const wfData = res || {}
+      workflowName.value = wfData.name || wf.name || '未命名'
+      canvasNodes.value = (wfData.nodes || []).map((n, i) => ({
+        ...n,
+        x: n.x ?? (30 + i * 260),
+        y: n.y ?? 160,
+        configValues: n.configValues || {},
+        schema: n.schema || nodeSchemas.value[n.schemaKey] || null,
+      }))
+      selectedNodeId.value = null
+    }).catch(() => {
+      workflowName.value = wf.name || '未命名'
+      canvasNodes.value = []
+    })
   }
 
-  function createNewWorkflow() {
+  async function createNewWorkflow() {
     const id = 'wf_' + Date.now()
+    const name = '新建工作流'
     workflows.value[id] = {
       id,
-      name: '新建工作流',
+      name,
       icon: '🔧',
       time: '刚刚',
       type: 'custom',
       nodes: [],
-      config: {}
+      config: {},
     }
     currentWorkflowId.value = id
-    workflowName.value = '新建工作流'
+    workflowName.value = name
     canvasNodes.value = []
     selectedNodeId.value = null
+    // 立即保存到后端
+    try {
+      await workflowApi.saveWorkflow({
+        id,
+        name,
+        icon: '🔧',
+        type: 'custom',
+        nodes: [],
+        config: {},
+      })
+    } catch (e) {
+      console.error('createNewWorkflow save error:', e)
+    }
   }
 
   async function saveCurrentWorkflow() {
     if (!currentWorkflowId.value) return
     const wf = workflows.value[currentWorkflowId.value]
     if (!wf) return
-    wf.name = workflowName.value
-    wf.nodes = canvasNodes.value.map(({ x, y, ...rest }) => rest)
+    // 节点要保存完整配置：id, type, title, icon, body, schemaKey, configValues
+    wf.nodes = canvasNodes.value.map(({ x, y, schema, ...rest }) => rest)
     try {
       await workflowApi.saveWorkflow({
         id: wf.id,
         name: wf.name,
-        type: wf.type,
+        icon: wf.icon || '🔧',
+        type: 'custom',
         nodes: wf.nodes,
-        config: wf.config
+        config: wf.config || {},
       })
       wf.time = '刚刚'
     } catch (e) {

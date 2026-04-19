@@ -11,6 +11,7 @@ const activeTab = ref('node') // 'node' | 'wf'
 const fileInputRef = ref(null)
 const isLoadingLibrary = ref(false)
 const newSpaceName = ref('')
+const isSaving = ref(false)
 
 // 加载文档库空间
 onMounted(async () => {
@@ -203,6 +204,16 @@ async function handleExecute() {
 }
 
 // ==================== 全局设置 ====================
+async function handleSaveWorkflow() {
+  if (isSaving.value) return
+  isSaving.value = true
+  try {
+    await workflowStore.saveCurrentWorkflow()
+  } finally {
+    isSaving.value = false
+  }
+}
+
 function handleGlobalInputSource(value) {
   // 全局设置也写入第一个输入节点的配置
   const firstInputNode = workflowStore.canvasNodes.find(n => n.type === 'input')
@@ -362,6 +373,18 @@ const filteredFields = computed(() => {
             <div class="toggle-switch on" @click="$event.target.classList.toggle('on')"></div>
           </div>
         </div>
+
+        <!-- 保存按钮 -->
+        <button
+          class="save-wf-btn"
+          :class="{ saving: isSaving }"
+          :disabled="isSaving"
+          @click="handleSaveWorkflow"
+        >
+          <span v-if="isSaving" class="save-spinner"></span>
+          <span v-else>💾</span>
+          <span>{{ isSaving ? '保存中...' : '保存工作流' }}</span>
+        </button>
       </div>
 
       <!-- ======== 节点配置 ======== -->
@@ -1239,5 +1262,53 @@ const filteredFields = computed(() => {
 
 .exec-log-item.log-error {
   color: var(--accent-danger);
+}
+
+/* Save workflow button */
+.save-wf-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  margin-top: 20px;
+  background: var(--gradient-primary);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.save-wf-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+
+.save-wf-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.save-wf-btn.saving {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.save-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>

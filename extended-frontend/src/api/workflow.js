@@ -11,9 +11,14 @@ export default {
     return client.get(`/workflows/templates/${templateId}`)
   },
 
-  /** 获取用户工作流列表 */
+  /** 获取用户工作流列表（返回完整配置） */
   getWorkflows() {
     return client.get('/workflows')
+  },
+
+  /** 获取单个工作流的完整配置 */
+  getWorkflow(workflowId) {
+    return client.get(`/workflows/${workflowId}`)
   },
 
   /** 保存工作流（新建或更新） */
