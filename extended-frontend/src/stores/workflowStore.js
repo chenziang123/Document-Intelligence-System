@@ -68,6 +68,15 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'spaceId', label: '选择文档库', type: 'library-selector' }
       ]
     },
+    'schema-txt-input': {
+      icon: '📄', iconClass: 'input',
+      title: 'TXT 输入', subtitle: '输入节点',
+      fields: [
+        { key: 'inputSource', label: '文档来源', type: 'select-source',
+          options: [{ value: 'library', label: '从文档库选择' }, { value: 'local', label: '本地上传' }] },
+        { key: 'spaceId', label: '选择文档库', type: 'library-selector' }
+      ]
+    },
     'schema-docx-input': {
       icon: '📘', iconClass: 'input',
       title: 'DOCX 输入', subtitle: '输入节点',
@@ -94,6 +103,72 @@ export const useWorkflowStore = defineStore('workflow', () => {
       fields: [
         { key: 'targetLanguage', label: '目标语言', type: 'language-selector' },
         { key: 'prompt', label: '翻译提示词', type: 'textarea' }
+      ]
+    },
+    'schema-extract-summary': {
+      icon: '📋', iconClass: 'ai',
+      title: '内容提取', subtitle: '提取节点',
+      fields: [
+        { key: 'extractType', label: '提取类型', type: 'select',
+          options: [{ value: 'summary', label: '生成摘要' }, { value: 'keypoints', label: '提取要点' }, { value: 'both', label: '摘要+要点' }] },
+        { key: 'summaryLength', label: '摘要长度', type: 'select',
+          options: [{ value: 'short', label: '简短' }, { value: 'medium', label: '适中' }, { value: 'detailed', label: '详细' }] },
+        { key: 'prompt', label: '自定义提示词', type: 'textarea' }
+      ]
+    },
+    'schema-extract-data': {
+      icon: '📊', iconClass: 'ai',
+      title: '数据抽取', subtitle: '抽取节点',
+      fields: [
+        { key: 'dataFormat', label: '输出格式', type: 'select',
+          options: [{ value: 'json', label: 'JSON' }, { value: 'csv', label: 'CSV' }, { value: 'table', label: '表格' }] },
+        { key: 'extractFields', label: '要提取的字段', type: 'textarea', placeholder: '例: 名称,日期,金额（逗号分隔）' },
+        { key: 'prompt', label: '提取规则描述', type: 'textarea' }
+      ]
+    },
+    'schema-analyze-content': {
+      icon: '🔍', iconClass: 'ai',
+      title: '内容分析', subtitle: '分析节点',
+      fields: [
+        { key: 'analysisType', label: '分析类型', type: 'select',
+          options: [{ value: 'keywords', label: '关键词提取' }, { value: 'entities', label: '实体识别' }, { value: 'all', label: '全面分析' }] },
+        { key: 'entityTypes', label: '实体类型', type: 'select-multiple',
+          options: [{ value: 'person', label: '人名' }, { value: 'location', label: '地名' }, { value: 'org', label: '机构' }, { value: 'date', label: '日期' }] },
+        { key: 'topK', label: '关键词数量', type: 'input', placeholder: '默认10' },
+        { key: 'prompt', label: '自定义分析要求', type: 'textarea' }
+      ]
+    },
+    'schema-enhance-text': {
+      icon: '✨', iconClass: 'ai',
+      title: '文本增强', subtitle: '增强节点',
+      fields: [
+        { key: 'enhanceType', label: '增强类型', type: 'select',
+          options: [{ value: 'grammar', label: '语法检查' }, { value: 'polish', label: '文本润色' }, { value: 'rephrase', label: '改写' }, { value: 'all', label: '全面优化' }] },
+        { key: 'style', label: '文本风格', type: 'select',
+          options: [{ value: 'concise', label: '简洁' }, { value: 'formal', label: '学术' }, { value: 'casual', label: '口语' }, { value: 'professional', label: '专业' }] },
+        { key: 'prompt', label: '自定义要求', type: 'textarea' }
+      ]
+    },
+    'schema-convert-format': {
+      icon: '🔄', iconClass: 'ai',
+      title: '格式转换', subtitle: '转换节点',
+      fields: [
+        { key: 'targetFormat', label: '目标格式', type: 'select',
+          options: [{ value: 'markdown', label: 'Markdown' }, { value: 'html', label: 'HTML' }, { value: 'plaintext', label: '纯文本' }, { value: 'json', label: 'JSON' }] },
+        { key: 'preserveFormatting', label: '保留原格式', type: 'toggle' },
+        { key: 'preserveStructure', label: '保留结构', type: 'toggle' },
+        { key: 'prompt', label: '自定义转换规则', type: 'textarea' }
+      ]
+    },
+    'schema-split-document': {
+      icon: '✂️', iconClass: 'ai',
+      title: '文档分割', subtitle: '分割节点',
+      fields: [
+        { key: 'splitMethod', label: '分割方式', type: 'select',
+          options: [{ value: 'section', label: '按章节' }, { value: 'paragraph', label: '按段落' }, { value: 'size', label: '按大小' }, { value: 'page', label: '按页数' }] },
+        { key: 'splitSize', label: '分割参数', type: 'input', placeholder: '如大小:字符数或页数' },
+        { key: 'preserveContext', label: '保留上下文', type: 'toggle' },
+        { key: 'prompt', label: '自定义分割规则', type: 'textarea' }
       ]
     },
     'schema-save': {
@@ -134,6 +209,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
           schema: null
         },
         {
+          icon: '📄', name: 'TXT 输入', type: 'input', title: 'TXT 输入', body: '导入 TXT 文本文件',
+          schemaKey: 'schema-txt-input',
+          schema: null
+        },
+        {
           icon: '📘', name: 'DOCX 输入', type: 'input', title: 'DOCX 输入', body: '导入 Word 文档',
           schemaKey: 'schema-docx-input',
           schema: null
@@ -151,6 +231,36 @@ export const useWorkflowStore = defineStore('workflow', () => {
         {
           icon: '🌍', name: 'AI 翻译', type: 'ai', title: 'AI 翻译', body: '使用大模型进行智能翻译处理',
           schemaKey: 'schema-translate',
+          schema: null
+        },
+        {
+          icon: '📋', name: '内容提取', type: 'ai', title: '内容提取', body: '生成摘要和提取关键要点',
+          schemaKey: 'schema-extract-summary',
+          schema: null
+        },
+        {
+          icon: '📊', name: '数据抽取', type: 'ai', title: '数据抽取', body: '从文档中提取结构化数据',
+          schemaKey: 'schema-extract-data',
+          schema: null
+        },
+        {
+          icon: '🔍', name: '内容分析', type: 'ai', title: '内容分析', body: '关键词提取和实体识别',
+          schemaKey: 'schema-analyze-content',
+          schema: null
+        },
+        {
+          icon: '✨', name: '文本增强', type: 'ai', title: '文本增强', body: '语法检查、润色和改写',
+          schemaKey: 'schema-enhance-text',
+          schema: null
+        },
+        {
+          icon: '🔄', name: '格式转换', type: 'ai', title: '格式转换', body: '在多种格式间智能转换',
+          schemaKey: 'schema-convert-format',
+          schema: null
+        },
+        {
+          icon: '✂️', name: '文档分割', type: 'ai', title: '文档分割', body: '智能分割文档为多个部分',
+          schemaKey: 'schema-split-document',
           schema: null
         }
       ]
@@ -491,6 +601,36 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   // ==================== 工作流执行 ====================
 
+  function _sanitizeConfigValue(value) {
+    if (Array.isArray(value)) {
+      return value
+        .map(v => _sanitizeConfigValue(v))
+        .filter(v => v !== null && v !== undefined)
+    }
+
+    if (value && typeof value === 'object') {
+      if (Object.prototype.hasOwnProperty.call(value, 'value')) {
+        return value.value
+      }
+      return value
+    }
+
+    if (value === '[object Object]') {
+      return null
+    }
+
+    return value
+  }
+
+  function _sanitizeNodeConfigValues(configValues) {
+    const src = configValues || {}
+    const out = {}
+    Object.keys(src).forEach(k => {
+      out[k] = _sanitizeConfigValue(src[k])
+    })
+    return out
+  }
+
   async function executeWorkflow() {
     if (isExecuting.value) return
     isExecuting.value = true
@@ -522,7 +662,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
           id: n.id,
           type: n.type,
           title: n.title,
-          configValues: n.configValues
+          configValues: _sanitizeNodeConfigValues(n.configValues)
         })),
         docs: selectedDocs.value.map(d => d.id),
         localFiles: localFilePayloads
