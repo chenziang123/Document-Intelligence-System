@@ -60,6 +60,27 @@ function getFieldValue(field, node) {
   return node.configValues[field.key] ?? null
 }
 
+function optionValue(opt) {
+  if (opt && typeof opt === 'object') return opt.value ?? opt.label ?? ''
+  return opt
+}
+
+function optionLabel(opt) {
+  if (opt && typeof opt === 'object') return opt.label ?? opt.value ?? ''
+  return opt
+}
+
+function normalizeFieldValue(value) {
+  if (value && typeof value === 'object') return value.value ?? value.label ?? null
+  return value
+}
+
+function getMultiFieldValues(field, node) {
+  const raw = getFieldValue(field, node)
+  if (!Array.isArray(raw)) return []
+  return raw.map(v => normalizeFieldValue(v))
+}
+
 // ==================== Schema 获取 ====================
 function getNodeSchema(node) {
   if (!node) return null
@@ -272,6 +293,27 @@ const filteredFields = computed(() => {
     }
     return true
   })
+})
+
+const executionButtonText = computed(() => {
+  const node = workflowStore.selectedNode
+  if (!node) return '执行'
+  
+  const title = node.title || node.type
+  
+  // 根据节点标题生成对应的按钮文本
+  const verbMap = {
+    'AI 翻译': '翻译',
+    '内容提取': '提取',
+    '数据抽取': '抽取',
+    '内容分析': '分析',
+    '文本增强': '增强',
+    '格式转换': '转换',
+    '文档分割': '分割'
+  }
+  
+  const verb = verbMap[title] || '处理'
+  return `开始${verb}`
 })
 </script>
 
@@ -520,10 +562,14 @@ const filteredFields = computed(() => {
               <label class="field-label">{{ field.label }}</label>
               <select
                 class="config-select"
-                :value="getFieldValue(field, workflowStore.selectedNode)"
+                :value="normalizeFieldValue(getFieldValue(field, workflowStore.selectedNode))"
                 @change="updateConfig(field.key, $event.target.value)"
               >
-                <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
+                <option
+                  v-for="opt in (field.options || [])"
+                  :key="optionValue(opt)"
+                  :value="optionValue(opt)"
+                >{{ optionLabel(opt) }}</option>
               </select>
             </div>
 
@@ -575,16 +621,16 @@ const filteredFields = computed(() => {
             </div>
 
             <!-- ===== Multi-select tags ===== -->
-            <div v-else-if="field.type === 'multiselect'" class="field">
+            <div v-else-if="field.type === 'multiselect' || field.type === 'select-multiple'" class="field">
               <label class="field-label">{{ field.label }}</label>
               <div class="tag-grid">
                 <div
-                  v-for="opt in field.options"
-                  :key="opt"
+                  v-for="opt in (field.options || [])"
+                  :key="optionValue(opt)"
                   class="tag-chip"
-                  :class="{ active: (getFieldValue(field, workflowStore.selectedNode) || []).includes(opt) }"
-                  @click="toggleMulti(field.key, opt, !(getFieldValue(field, workflowStore.selectedNode) || []).includes(opt))"
-                >{{ opt }}</div>
+                  :class="{ active: getMultiFieldValues(field, workflowStore.selectedNode).includes(optionValue(opt)) }"
+                  @click="toggleMulti(field.key, optionValue(opt), !getMultiFieldValues(field, workflowStore.selectedNode).includes(optionValue(opt)))"
+                >{{ optionLabel(opt) }}</div>
               </div>
             </div>
 
@@ -719,7 +765,7 @@ const filteredFields = computed(() => {
         >
           <span v-if="workflowStore.isExecuting" class="btn-spinner"></span>
           <span v-else>▶</span>
-          <span>{{ workflowStore.isExecuting ? `翻译中 ${workflowStore.executionProgress}%` : '开始翻译' }}</span>
+          <span>{{ workflowStore.isExecuting ? `处理中 ${workflowStore.executionProgress}%` : executionButtonText }}</span>
         </button>
 
         <!-- Execution Progress -->

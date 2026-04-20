@@ -33,6 +33,7 @@ from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import add_session_file, get_session_by_id
 from utils.logger import get_logger
 from workflow_storage import delete_workflow, get_workflow, list_workflows, save_workflow
+from .workflows_processors import _process_node
 
 router = APIRouter(prefix="/api/workflows", tags=["工作流编排"])
 logger = get_logger(__name__)
@@ -97,6 +98,15 @@ def _get_translation_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
         if node.type in ("translate", "ai"):
             return node.configValues or {}
     return {"targetLanguage": "中文"}
+
+
+def _get_processing_nodes(nodes: List[WorkflowNode]) -> List[WorkflowNode]:
+    """从节点列表中提取所有处理节点（排除输入/输出节点）。"""
+    processing = []
+    for node in nodes:
+        if node.type not in ("input", "output"):
+            processing.append(node)
+    return processing
 
 
 # 语言 code → 人类可读名称映射
@@ -303,18 +313,30 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
                 state["logs"].append({"type": "warn", "message": f"  无法读取文件内容，跳过: {file_info.name}"})
                 continue
 
-            # ===== 翻译处理（使用 LLM）=====
-            state["logs"].append({"type": "info", "message": f"  AI 翻译中..."})
-            try:
-                translated = _translate_content(content, file_info.name, config, target_language)
-            except Exception as e:
-                logger.error(f"翻译失败 {file_info.name}: {e}")
-                state["logs"].append({"type": "error", "message": f"  翻译失败: {e}"})
-                translated = None
-
-            if not translated:
-                state["logs"].append({"type": "error", "message": f"  翻译结果为空，跳过: {file_info.name}"})
+            # ===== 处理流水线（支持多个处理节点） =====
+            processing_nodes = _get_processing_nodes(params.nodes)
+            result_content = content
+            
+            for proc_node in processing_nodes:
+                node_name = proc_node.title or proc_node.type
+                state["logs"].append({"type": "info", "message": f"  {node_name} 处理中..."})
+                try:
+                    result_content = _process_node(result_content, file_info.name, proc_node, config, state)
+                except Exception as e:
+                    logger.error(f"处理失败 {file_info.name} ({node_name}): {e}")
+                    state["logs"].append({"type": "error", "message": f"  {node_name} 失败: {e}"})
+                    result_content = None
+                    break
+                
+                if not result_content:
+                    state["logs"].append({"type": "error", "message": f"  {node_name} 结果为空，跳过: {file_info.name}"})
+                    break
+            
+            if not result_content:
+                state["logs"].append({"type": "error", "message": f"  处理流水线完成但无有效结果，跳过: {file_info.name}"})
                 continue
+            
+            translated = result_content
 
             # 保存输出文件
             try:
@@ -390,40 +412,6 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
         state["status"] = "failed"
         state["error"] = str(e)
         state["logs"].append({"type": "error", "message": f"执行异常: {e}"})
-
-
-def _translate_content(content: str, file_name: str, config: SystemConfig, target_language: str = "中文") -> Optional[str]:
-    """使用 LLM 翻译文档内容。"""
-    from core.llm.llm_service import get_llm_service
-
-    service = get_llm_service()
-    if not hasattr(service, "is_available") or not service.is_available():
-        logger.warning("LLM 服务不可用，尝试直接保存原文")
-        return content
-
-    # 截断大文件避免超出 token 限制
-    text = content[:8000] if len(content) > 8000 else content
-    prompt = (
-        f"你是一个专业的文档翻译助手。请将以下文档翻译为{target_language}，保持原文的格式和结构。\n"
-        "注意：\n"
-        "1. 保持段落结构不变\n"
-        "2. 保留标题层级\n"
-        "3. 保留代码块、表格等特殊格式\n"
-        "4. 不要添加或删除内容，只进行翻译\n"
-        f"5. 如果源文已经是{target_language}，直接返回原文\n\n"
-        f"文档内容：\n{text}"
-    )
-
-    try:
-        response = service.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            strip_markdown_output=False,
-        )
-        return response if isinstance(response, str) else str(response)
-    except Exception as e:
-        logger.error(f"LLM 翻译失败: {e}")
-    return content
 
 
 def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig):
