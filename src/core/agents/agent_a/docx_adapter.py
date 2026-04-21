@@ -18,6 +18,8 @@ from docx.text.run import Run
 
 from core.llm.llm_service import get_llm_service
 
+from .standard_style import get_standard_style_preset
+
 
 @dataclass
 class ActionExecutionResult:
@@ -155,50 +157,142 @@ class DocxAdapter:
         }
 
     def _apply_insert_page_number(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-        section = self.document.sections[0]
-        footer = section.footer
-        paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        alignment = str(params.get("alignment") or params.get("align") or "center").lower()
+        alignment_map = {
+            "center": WD_PARAGRAPH_ALIGNMENT.CENTER,
+            "left": WD_PARAGRAPH_ALIGNMENT.LEFT,
+            "right": WD_PARAGRAPH_ALIGNMENT.RIGHT,
+        }
 
-        if "PAGE" not in paragraph._p.xml:
-            fld_simple = OxmlElement("w:fldSimple")
-            fld_simple.set(qn("w:instr"), "PAGE")
-            run = OxmlElement("w:r")
-            fld_simple.append(run)
-            paragraph._p.append(fld_simple)
+        updated_sections = 0
+        for section in self.document.sections:
+            footer = section.footer
+            paragraph = None
+            for p in footer.paragraphs:
+                if "PAGE" in p._p.xml:
+                    paragraph = p
+                    break
+            if paragraph is None:
+                paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+                fld_simple = OxmlElement("w:fldSimple")
+                fld_simple.set(qn("w:instr"), "PAGE")
+                run = OxmlElement("w:r")
+                fld_simple.append(run)
+                paragraph._p.append(fld_simple)
+            paragraph.alignment = alignment_map.get(alignment, WD_PARAGRAPH_ALIGNMENT.CENTER)
+            updated_sections += 1
 
-        return {"position": params.get("position", "footer"), "align": params.get("align", "center")}
+        return {"position": params.get("position", "footer"), "align": alignment, "updated_sections": updated_sections}
 
     def _apply_unify_style(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+        preset = get_standard_style_preset("docx") if str(params.get("style_preset", "")).lower() == "standard" else {}
+        body_font_name = str(params.get("body_font_name") or preset.get("body_font_name") or "")
+        body_font_size = float(params.get("body_font_size") or preset.get("body_font_size") or 11)
+        heading_font_name = str(params.get("heading_font_name") or preset.get("heading_font_name") or body_font_name or "")
+        heading_font_size = float(params.get("heading_font_size") or preset.get("heading_font_size") or 14)
+
+        def _as_bool(value: Any, default: bool = False) -> bool:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "y", "on"}:
+                return True
+            if text in {"0", "false", "no", "n", "off"}:
+                return False
+            return default
+
+        heading_bold = _as_bool(params.get("heading_bold"), _as_bool(preset.get("heading_bold"), True))
+
         updated = 0
         for paragraph in self.document.paragraphs:
             style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
-            if "heading" in style_name:
+            is_heading = "heading" in style_name or self._looks_like_structured_heading((paragraph.text or "").strip())
+            if is_heading:
+                for run in paragraph.runs:
+                    if heading_font_name:
+                        run.font.name = heading_font_name
+                    run.bold = heading_bold
+                    run.font.size = Pt(heading_font_size)
+                updated += 1
                 continue
+
             if paragraph.style and paragraph.style.name != "Normal":
                 paragraph.style = self.document.styles["Normal"]
             for run in paragraph.runs:
-                if run.font.size is None:
-                    run.font.size = Pt(11)
+                if body_font_name:
+                    run.font.name = body_font_name
+                if run.font.size is None or str(params.get("style_preset", "")).lower() == "standard":
+                    run.font.size = Pt(body_font_size)
             updated += 1
-        return {"updated_paragraphs": updated, "strategy": params.get("strategy", "normalize")}
+        return {
+            "updated_paragraphs": updated,
+            "strategy": params.get("strategy", "standard"),
+            "style_preset": params.get("style_preset", "standard"),
+        }
 
     def _apply_reorder_paragraphs(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         from_idx = int(params.get("from", 0))
         to_idx = int(params.get("to", 0))
 
-        candidates = [p for p in self.document.paragraphs if p.text.strip()]
+        candidates = self._get_content_paragraphs_for_indexing()
         if from_idx <= 0 or to_idx <= 0 or from_idx > len(candidates) or to_idx > len(candidates):
             return {"moved": False, "reason": "索引越界", "from": from_idx, "to": to_idx}
 
+        if from_idx == to_idx:
+            return {"moved": True, "from": from_idx, "to": to_idx, "reason": "源段落与目标段落相同"}
+
         src = candidates[from_idx - 1]
         dst = candidates[to_idx - 1]
+        src_anchor = self._get_heading_anchor_index_for_paragraph(src)
+        dst_anchor = self._get_heading_anchor_index_for_paragraph(dst)
+        if src_anchor != dst_anchor:
+            return {
+                "moved": False,
+                "reason": "禁止跨标题块移动段落",
+                "from": from_idx,
+                "to": to_idx,
+            }
         src_elem = src._p
         dst_elem = dst._p
 
         src_elem.getparent().remove(src_elem)
-        dst_elem.addprevious(src_elem)
+        dst_elem.addnext(src_elem)
         return {"moved": True, "from": from_idx, "to": to_idx}
+
+    @staticmethod
+    def _looks_like_structured_heading(text: str) -> bool:
+        s = (text or "").strip()
+        if not s:
+            return False
+        patterns = [
+            r"^[一二三四五六七八九十]+、",
+            r"^[（(][一二三四五六七八九十]+[）)]",
+            r"^第[一二三四五六七八九十\d]+[章节部分篇]",
+            r"^\d+(?:\.\d+){0,3}[\.、]",
+            r"^#{1,6}\s+",
+        ]
+        return any(re.match(p, s) for p in patterns)
+
+    def _get_heading_anchor_index_for_paragraph(self, paragraph: Any) -> int:
+        paragraphs = list(self.document.paragraphs)
+        idx = -1
+        for i, p in enumerate(paragraphs):
+            if p._p is paragraph._p:
+                idx = i
+                break
+        if idx < 0:
+            return -1
+
+        anchor = -1
+        for i in range(0, idx + 1):
+            p = paragraphs[i]
+            style_name = (p.style.name or "").lower() if p.style else ""
+            txt = (p.text or "").strip()
+            if "heading" in style_name or self._looks_like_structured_heading(txt):
+                anchor = i
+        return anchor
 
     def _apply_batch_format(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         updated = 0
@@ -448,15 +542,8 @@ class DocxAdapter:
 
     def _apply_set_font_family(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         font_name = str(params.get("font_name", "宋体")).strip() or "宋体"
-        scope = str(target.get("scope", "all"))
-        section_title = str(target.get("section_title", "")).strip()
-        heading_level = self._safe_int(target.get("level"))
         updated_runs = 0
-        paragraphs = (
-            self._iter_section_content_paragraphs(section_title)
-            if scope == "section_content" and section_title
-            else self._iter_target_paragraphs(scope, heading_level=heading_level)
-        )
+        paragraphs = self._select_target_paragraphs(target)
         for paragraph in paragraphs:
             self._ensure_paragraph_runs(paragraph)
             for run in paragraph.runs:
@@ -466,50 +553,33 @@ class DocxAdapter:
                 except Exception:
                     pass
                 updated_runs += 1
-        return {"scope": scope, "font_name": font_name, "updated_runs": updated_runs}
+        return {"scope": str(target.get("scope", "all")), "font_name": font_name, "updated_runs": updated_runs}
 
     def _apply_set_font_color(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         color_hex = self._normalize_color_hex(str(params.get("color", "000000")))
-        scope = str(target.get("scope", "all"))
-        section_title = str(target.get("section_title", "")).strip()
-        heading_level = self._safe_int(target.get("level"))
         rgb = RGBColor.from_string(color_hex)
         updated_runs = 0
-        paragraphs = (
-            self._iter_section_content_paragraphs(section_title)
-            if scope == "section_content" and section_title
-            else self._iter_target_paragraphs(scope, heading_level=heading_level)
-        )
+        paragraphs = self._select_target_paragraphs(target)
         for paragraph in paragraphs:
             self._ensure_paragraph_runs(paragraph)
             for run in paragraph.runs:
                 run.font.color.rgb = rgb
                 updated_runs += 1
-        result = {"scope": scope, "color": color_hex, "updated_runs": updated_runs}
-        if scope == "section_content":
-            result["section_title"] = section_title
-        return result
+        return {"scope": str(target.get("scope", "all")), "color": color_hex, "updated_runs": updated_runs}
 
     def _apply_set_font_size(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             size_pt = float(params.get("size_pt", 11.0))
         except Exception:
             size_pt = 11.0
-        scope = str(target.get("scope", "all"))
-        section_title = str(target.get("section_title", "")).strip()
-        heading_level = self._safe_int(target.get("level"))
         updated_runs = 0
-        paragraphs = (
-            self._iter_section_content_paragraphs(section_title)
-            if scope == "section_content" and section_title
-            else self._iter_target_paragraphs(scope, heading_level=heading_level)
-        )
+        paragraphs = self._select_target_paragraphs(target)
         for paragraph in paragraphs:
             self._ensure_paragraph_runs(paragraph)
             for run in paragraph.runs:
                 run.font.size = Pt(size_pt)
                 updated_runs += 1
-        return {"scope": scope, "size_pt": size_pt, "updated_runs": updated_runs}
+        return {"scope": str(target.get("scope", "all")), "size_pt": size_pt, "updated_runs": updated_runs}
 
     def _apply_set_paragraph_alignment(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         scope = str(target.get("scope", "all"))
@@ -559,7 +629,7 @@ class DocxAdapter:
 
     def _apply_set_highlight(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         """应用文本高亮：黄色背景标记修改处"""
-        find_text = str(params.get("find", ""))
+        find_text = str(params.get("find", "") or target.get("text", "") or target.get("target_text", ""))
         highlight_color = str(params.get("highlight_color", "yellow")).lower()
         if not find_text:
             return {"highlighted": 0, "color": highlight_color}
@@ -577,64 +647,53 @@ class DocxAdapter:
 
         highlighted = 0
         for paragraph in self.document.paragraphs:
-            if self._highlight_text_in_paragraph(paragraph, find_text, wd_highlight):
-                highlighted += 1
+            highlighted += self._highlight_text_in_paragraph(paragraph, find_text, wd_highlight)
 
         for table in self.document.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        if self._highlight_text_in_paragraph(paragraph, find_text, wd_highlight):
-                            highlighted += 1
+                        highlighted += self._highlight_text_in_paragraph(paragraph, find_text, wd_highlight)
 
         return {"find": find_text, "highlighted": highlighted, "color": highlight_color}
 
     @staticmethod
-    def _highlight_text_in_paragraph(paragraph, find_text: str, highlight_color: str) -> bool:
-        """在段落中高亮指定文本"""
+    def _highlight_text_in_paragraph(paragraph, find_text: str, highlight_color: str) -> int:
+        """在段落中仅高亮指定文本子串。"""
         text = paragraph.text or ""
         if find_text not in text:
-            return False
+            return 0
 
-        changed = False
-        for run in paragraph.runs:
-            if find_text in (run.text or ""):
-                # 需要处理可能跨越多个run的情况
-                idx = 0
-                while idx < len(run.text):
-                    pos = run.text.find(find_text, idx)
-                    if pos == -1:
-                        break
-                    # 直接在run的xml中设置高亮
-                    from docx.enum.text import WD_COLOR_INDEX
-                    color_enum = getattr(WD_COLOR_INDEX, highlight_color.upper(), WD_COLOR_INDEX.YELLOW)
-                    run.font.highlight_color = color_enum
-                    changed = True
-                    idx = pos + len(find_text)
+        from docx.enum.text import WD_COLOR_INDEX
 
-        if changed:
-            return True
+        color_enum = getattr(WD_COLOR_INDEX, highlight_color.upper(), WD_COLOR_INDEX.YELLOW)
+        changed = 0
+        for run in list(paragraph.runs):
+            run_text = run.text or ""
+            if not run_text or find_text not in run_text:
+                continue
 
-        # 如果是跨run的情况，需要更复杂的处理
-        full_text = paragraph.text
-        if find_text in full_text:
-            # 保留现有的run，但在渲染时添加高亮
-            pos = 0
-            for run in paragraph.runs:
-                run_start = pos
-                run_end = pos + len(run.text)
-                
-                # 检查该run是否包含高亮文本的一部分
-                segment_start = max(run_start, full_text.find(find_text, max(0, run_start - len(find_text))))
-                segment_end = segment_start + len(find_text)
-                
-                if segment_start < run_end and segment_end > run_start:
-                    from docx.enum.text import WD_COLOR_INDEX
-                    color_enum = getattr(WD_COLOR_INDEX, highlight_color.upper(), WD_COLOR_INDEX.YELLOW)
-                    run.font.highlight_color = color_enum
-                    changed = True
-                
-                pos = run_end
+            parts = run_text.split(find_text)
+            run.text = parts[0]
+            cursor = run._r
+            template = copy.deepcopy(run._r)
+
+            for idx in range(1, len(parts)):
+                highlighted_elem = copy.deepcopy(template)
+                highlighted_run = Run(highlighted_elem, paragraph)
+                highlighted_run.text = find_text
+                highlighted_run.font.highlight_color = color_enum
+                cursor.addnext(highlighted_elem)
+                cursor = highlighted_elem
+                changed += 1
+
+                tail = parts[idx]
+                if tail:
+                    tail_elem = copy.deepcopy(template)
+                    tail_run = Run(tail_elem, paragraph)
+                    tail_run.text = tail
+                    cursor.addnext(tail_elem)
+                    cursor = tail_elem
 
         return changed
 
@@ -681,27 +740,42 @@ class DocxAdapter:
         footer_text = str(params.get("text", "Page {page_number}"))
         alignment = str(params.get("alignment", "center")).lower()
         include_page_number = bool(params.get("include_page_number", False))
+        preserve_existing_page = bool(params.get("preserve_existing_page_number", False))
 
         try:
             # 获取所有section的footer（通常只有一个）
             for section in self.document.sections:
                 footer = section.footer
-                # 清除已有内容
-                for para in footer.paragraphs:
-                    para.clear()
-                
-                # 添加新的页脚内容
-                footer_para = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-                
+                existing_page_para = None
+                for p in footer.paragraphs:
+                    if "PAGE" in p._p.xml:
+                        existing_page_para = p
+                        break
+
+                if preserve_existing_page and existing_page_para is not None:
+                    footer_para = existing_page_para
+                else:
+                    footer_para = footer.add_paragraph()
+
                 # 设置对齐方式
                 alignment_map = {
                     "center": WD_PARAGRAPH_ALIGNMENT.CENTER,
                     "left": WD_PARAGRAPH_ALIGNMENT.LEFT,
                     "right": WD_PARAGRAPH_ALIGNMENT.RIGHT,
                 }
-                footer_para.alignment = alignment_map.get(alignment, WD_PARAGRAPH_ALIGNMENT.CENTER)
+                if not (preserve_existing_page and existing_page_para is not None):
+                    footer_para.alignment = alignment_map.get(alignment, WD_PARAGRAPH_ALIGNMENT.CENTER)
                 
                 template_text = footer_text.replace("{page_count}", "{total_pages}")
+                if preserve_existing_page:
+                    template_text = template_text.replace("{page_number}", "").replace("{total_pages}", "")
+                    template_text = re.sub(r"^[，,\s]+|[，,\s]+$", "", template_text)
+                    if template_text:
+                        if footer_para.text and not footer_para.text.rstrip().endswith(("，", ",")):
+                            footer_para.add_run("，")
+                        footer_para.add_run(template_text)
+                    continue
+
                 if "{page_number}" in template_text or "{total_pages}" in template_text:
                     parts = re.split(r"(\{page_number\}|\{total_pages\})", template_text)
                     for part in parts:
@@ -789,8 +863,20 @@ class DocxAdapter:
         - {"scope": "selective", "target_text": "xxx"} - 包含特定文本的段落
         - {"scope": "paragraph", "paragraph_index": 0} - 特定索引的段落
         """
+        target = dict(target or {})
+        if str(target.get("type", "")).strip().lower() == "paragraph" and "paragraph_index" not in target:
+            target["paragraph_index"] = target.get("index", -1)
+            target.setdefault("paragraph_index_basis", "body")
+
+        element = str(target.get("element", "")).strip().lower()
+        if element in {"body_text", "body", "正文", "paragraph"} and not target.get("scope"):
+            target["scope"] = "body"
+        elif element in {"heading", "title", "headings"} and not target.get("scope"):
+            target["scope"] = "heading"
+
         scope = str(target.get("scope", "document")).lower()
         target_text = target.get("target_text", "")
+        section_title = str(target.get("section_title", "")).strip()
         paragraph_index = target.get("paragraph_index", -1)
         paragraph_index_basis = str(target.get("paragraph_index_basis", "absolute") or "absolute").lower()
         
@@ -808,6 +894,25 @@ class DocxAdapter:
                 body_paragraphs = self._get_content_paragraphs_for_indexing()
                 return body_paragraphs[index] if index < len(body_paragraphs) else None
             return all_paragraphs[index] if index < len(all_paragraphs) else None
+
+        if paragraph_index >= 0:
+            if scope == "selective" and target_text:
+                para = _resolve_paragraph_by_index(paragraph_index)
+                if para is None:
+                    return []
+                return [para] if target_text in (para.text or "") else []
+
+            para = _resolve_paragraph_by_index(paragraph_index)
+            if para is not None:
+                return [para]
+            return []
+
+        if scope == "section_content":
+            if section_title:
+                selected = self._iter_section_content_paragraphs(section_title)
+                if selected:
+                    return selected
+            return self._get_content_paragraphs_for_indexing()
         
         # 情况 1：选择特定索引的段落
         if scope == "paragraph" and paragraph_index >= 0:
@@ -837,12 +942,11 @@ class DocxAdapter:
     def _get_content_paragraphs_for_indexing(self) -> List[Any]:
         """用于“第X段”定位的正文段落列表（排除标题/署名/日期/空行）。"""
         paragraphs = list(self.document.paragraphs)
-        semantic_heading_set = set(self._get_heading_indices_for_title_ops(level=None))
         toc_block = self._get_toc_block_indices()
         content: List[Any] = []
 
         for idx, para in enumerate(paragraphs):
-            if idx in toc_block or idx in semantic_heading_set:
+            if idx in toc_block:
                 continue
 
             text = (para.text or "").strip()
@@ -851,6 +955,9 @@ class DocxAdapter:
 
             style_name = (para.style.name or "").lower() if para.style else ""
             if "heading" in style_name:
+                continue
+
+            if self._looks_like_structured_heading(text):
                 continue
 
             # 排除主标题、署名机构、日期等元信息行。
@@ -874,17 +981,7 @@ class DocxAdapter:
             return [p for idx, p in enumerate(paragraphs) if idx in heading_indices]
 
         if scope_norm in {"body", "正文", "paragraph"}:
-            selected = []
-            semantic_set = set(self._get_heading_indices_for_title_ops(level=None))
-            toc_block = self._get_toc_block_indices()
-            for idx, p in enumerate(paragraphs):
-                if idx in toc_block:
-                    continue
-                style_name = (p.style.name or "").lower() if p.style else ""
-                if "heading" in style_name or idx in semantic_set:
-                    continue
-                selected.append(p)
-            return selected
+            return self._get_content_paragraphs_for_indexing()
 
         return paragraphs
 
@@ -939,6 +1036,9 @@ class DocxAdapter:
             "grey": "808080",
             "orange": "FFA500",
             "purple": "800080",
+            "violet": "8A2BE2",
+            "紫": "800080",
+            "紫色": "800080",
             "yellow": "FFFF00",
         }
         if s.lower() in name_map:

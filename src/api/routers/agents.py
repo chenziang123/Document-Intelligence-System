@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
 from config import load_config
-from core.storage import build_blob_name, upload_file_to_storage
+from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage
 from db.auth_repository import resolve_user_from_authorization
-from db.session_repository import add_session_file, get_session_by_id
+from db.session_repository import add_session_file, get_session_by_id, get_session_files
 
 router = APIRouter(prefix="/api/agents", tags=["Agent编排"])
 
@@ -123,6 +124,11 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
 
         raise HTTPException(status_code=401, detail="需要登录后访问")
 
+    print(
+        f"[API] POST /api/agents/mixed-fill session_id={request.session_id} "
+        f"template_file={request.template_file} entities={len(request.entities)}"
+    )
+
     session = get_session_by_id(request.session_id, config=cfg, user_id=current_user.id if current_user else None)
     if not session:
         from fastapi import HTTPException
@@ -132,11 +138,47 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
     uploads_dir = Path("workspace/uploads") / request.session_id
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    template_source = Path(request.template_file)
+    template_ref = unquote(str(request.template_file or "").strip())
+    template_source = Path(template_ref)
+    if not template_source.exists():
+        # 兼容前端仅传 storage_key/file_name 的场景：从当前会话文件中反查本地 file_path
+        session_files = get_session_files(request.session_id, config=cfg, user_id=current_user.id if current_user else None)
+        matched = None
+        ref_name = Path(template_ref).name if template_ref else ""
+        for f in session_files:
+            sk = str(f.storage_key or "")
+            fn = str(f.file_name or "")
+            if (
+                (sk and (sk == template_ref or sk.endswith(template_ref) or template_ref.endswith(sk)))
+                or (fn and (fn == template_ref or (ref_name and fn == ref_name)))
+            ):
+                matched = f
+                break
+        if matched and matched.file_path:
+            candidate = Path(str(matched.file_path))
+            if candidate.exists():
+                template_source = candidate
+        if not template_source.exists() and matched and matched.storage_key:
+            # 若本地 file_path 不存在，尝试从存储下载到缓存目录
+            try:
+                cache_path = Path(cfg.temp_dir) / "file_cache" / request.session_id / "template" / (matched.file_name or ref_name or "template.xlsx")
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                template_source = Path(download_file_to_local(str(matched.storage_key), cache_path, config=cfg))
+            except Exception:
+                pass
+        if not template_source.exists() and ref_name:
+            # 按 basename 再兜底一次
+            for f in session_files:
+                if str(f.file_name or "") == ref_name and f.file_path:
+                    candidate = Path(str(f.file_path))
+                    if candidate.exists():
+                        template_source = candidate
+                        break
+
     if not template_source.exists():
         from fastapi import HTTPException
 
-        raise HTTPException(status_code=404, detail=f"模板文件不存在: {template_source}")
+        raise HTTPException(status_code=404, detail=f"模板文件不存在: {template_ref}")
 
     if "workspace/temp_uploads" in str(template_source):
         template_dest = uploads_dir / template_source.name
@@ -161,6 +203,7 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
 
     output_template_file = result.get("data", {}).get("template_output") if isinstance(result, dict) else None
     output_json_file = result.get("data", {}).get("output_json") if isinstance(result, dict) else None
+    print(f"[API] mixed-fill 结果 template_output={output_template_file} output_json={output_json_file}")
 
     file_ids = []
     for candidate in [output_template_file, output_json_file]:
@@ -186,7 +229,7 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
             session_file = add_session_file(
                 session_id=request.session_id,
                 file_name=path_obj.name,
-                file_type=path_obj.suffix.lower().lstrip(".") or "output",
+                file_type="generated",
                 file_path=str(path_obj),
                 file_size=path_obj.stat().st_size,
                 config=cfg,

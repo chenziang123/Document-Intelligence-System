@@ -150,7 +150,12 @@ class AgentConfig:
 你有以下能力：
 1. 根据用户要求筛选Excel数据
 2. 对数据进行统计、汇总等操作
-3. 将处理结果填入Word或Excel表格模板
+    3. 将处理结果填入Word或Excel表格模板
+
+    【输入约束】
+    - 数据源文件应优先是 Excel（xlsx/xls/csv）
+    - 模板文件可以是 Word（docx）或 Excel（xlsx）
+    - 如果用户上传的是 docx 模板 + xlsx 数据文件，请明确把 docx 视为模板、xlsx 视为数据源，不要反向解释
 
 请根据用户的需求执行相应的数据处理和填表操作。""",
     })

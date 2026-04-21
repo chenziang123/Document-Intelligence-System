@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .standard_style import get_standard_style_preset
+
 
 @dataclass
 class ActionExecutionResult:
@@ -141,7 +143,13 @@ class TxtAdapter:
             }
 
         block = movable_blocks.pop(from_idx - 1)
-        movable_blocks.insert(to_idx - 1, block)
+        # 自然语言“移动到第N段之后”采用 after 语义。
+        insert_idx = to_idx
+        if from_idx < to_idx:
+            # 先 pop 会导致目标索引左移一位。
+            insert_idx -= 1
+        insert_idx = max(0, min(insert_idx, len(movable_blocks)))
+        movable_blocks.insert(insert_idx, block)
 
         for idx, pos in enumerate(movable_positions):
             blocks[pos] = movable_blocks[idx]
@@ -193,9 +201,14 @@ class TxtAdapter:
         return {"removed": max(0, before - after)}
 
     def _apply_unify_style(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+        preset = get_standard_style_preset("txt") if str(params.get("style_preset", "")).lower() == "standard" else {}
         lines = [ln.rstrip() for ln in self.content.splitlines()]
         text = "\n".join(lines)
         text = re.sub(r"[ \t]{2,}", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         self.content = text
-        return {"updated": True, "strategy": params.get("strategy", "normalize")}
+        return {
+            "updated": True,
+            "strategy": params.get("strategy", preset.get("strategy", "standard")),
+            "style_preset": params.get("style_preset", preset.get("style_preset", "standard")),
+        }

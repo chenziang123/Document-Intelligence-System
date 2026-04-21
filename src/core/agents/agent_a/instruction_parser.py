@@ -41,17 +41,19 @@ SUPPORTED_ACTIONS = {
         ],
     },
     "unify_style": {
-        "keywords": ["样式统一", "统一样式", "统一风格", "统一格式风格", "格式统一"],
+        "keywords": ["样式统一", "统一样式", "统一风格", "统一格式风格", "格式统一", "文件格式化", "统一文件格式", "整体格式化", "标准格式", "规范格式"],
         "patterns": [
             r"(?:统一|标准化).{0,8}(?:样式|风格|格式)",
             r"(?:样式|风格|格式).{0,6}(?:统一|一致)",
             r"格式.{0,3}(?:都)?标准化",
+            r"(?:文件|全文|整体).{0,6}(?:格式化|统一格式)",
         ],
     },
     "reorder_paragraphs": {
-        "keywords": ["段落重排", "重排段落", "调整段落顺序", "段落换位", "移动第"],
+        "keywords": ["段落重排", "重排段落", "调整段落顺序", "段落换位", "移动第", "移到第", "移动到第", "行移动", "移动行"],
         "patterns": [
-            r"(?:从)?第\s*\d+\s*段(?:移动|挪到|放到|调到|到).{0,8}第\s*\d+\s*段",
+            r"(?:从)?第\s*\d+\s*(?:段|行)(?:移动|挪到|放到|调到|到).{0,8}第\s*\d+\s*(?:段|行)",
+            r"(?:从)?第\s*[一二三四五六七八九十\d]+\s*(?:段|行)(?:移动|挪到|放到|调到|到|移到).{0,8}第\s*[一二三四五六七八九十\d]+\s*(?:段|行)(?:之后)?",
             r"(?:重排|调整).{0,6}段落",
         ],
     },
@@ -116,7 +118,7 @@ SUPPORTED_ACTIONS = {
         ],
     },
     "set_font_color": {
-        "keywords": ["字体颜色", "文字颜色", "颜色改为", "红色", "蓝色", "黑色", "绿色", "font color"],
+        "keywords": ["字体颜色", "文字颜色", "颜色改为", "红色", "蓝色", "黑色", "绿色", "紫色", "紫", "font color"],
         "patterns": [
             r"(?:字体|文字).{0,4}颜色",
             r"(?:颜色|color).{0,6}(?:改为|设为|设置为|换成)",
@@ -418,8 +420,13 @@ def parse_instruction_with_llm_fallback(instruction: str, llm_service=None) -> D
             if _is_valid_action_plan_payload(parsed):
                 # 兜底一致性校验：当规则可稳定命中且与 LLM 动作完全不重合时，优先规则结果。
                 rule_payload = _build_rule_payload(instruction, service)
-                if rule_payload is not None and _should_prefer_rule_over_llm(parsed, rule_payload):
-                    return rule_payload
+                if rule_payload is not None:
+                    if _looks_like_multi_step_instruction(instruction):
+                        return rule_payload
+                    if _should_prefer_rule_over_llm(parsed, rule_payload):
+                        return rule_payload
+                    if _should_prefer_rule_by_instruction_coverage(instruction, parsed, rule_payload):
+                        return rule_payload
                 return parsed
 
     rule_payload = _build_rule_payload(instruction, service)
@@ -438,17 +445,22 @@ def _build_rule_payload(instruction: str, llm_service=None) -> Dict[str, Any] | 
     actions: List[Dict[str, Any]] = []
     segments = _split_instruction_segments(text)
 
-    for action_type, rule in SUPPORTED_ACTIONS.items():
-        # Guard against broad "字体" pattern swallowing color/size instructions.
-        contexts = _find_action_contexts(action_type, rule, segments)
-        if not contexts:
-            continue
+    # 按用户子指令顺序生成动作，保证后续执行是“前一条结果 -> 后一条输入”。
+    for seg in segments:
+        for action_type, rule in SUPPORTED_ACTIONS.items():
+            if not _segment_matches_action(action_type, rule, seg):
+                continue
 
-        for ctx in contexts:
             if action_type == "bold_heading":
-                actions.extend(_build_bold_heading_actions(ctx))
+                built = _build_bold_heading_actions(seg)
             else:
-                actions.append(_build_action_payload(action_type, ctx, llm_service=llm_service))
+                built = [_build_action_payload(action_type, seg, llm_service=llm_service)]
+
+            for action in built:
+                params = action.get("params") if isinstance(action.get("params"), dict) else {}
+                params.setdefault("__segment_text", seg)
+                action["params"] = params
+                actions.append(action)
 
     if not actions:
         return None
@@ -500,6 +512,43 @@ def _should_prefer_rule_over_llm(llm_payload: Dict[str, Any], rule_payload: Dict
     if not llm_types or not rule_types:
         return False
     return len(llm_types.intersection(rule_types)) == 0
+
+
+def _should_prefer_rule_by_instruction_coverage(instruction: str, llm_payload: Dict[str, Any], rule_payload: Dict[str, Any]) -> bool:
+    """当指令包含明确操作词且规则覆盖更多时，优先规则结果。"""
+    text = instruction or ""
+    llm_types = _extract_action_types(llm_payload)
+    rule_types = _extract_action_types(rule_payload)
+
+    expected: set[str] = set()
+    hints = {
+        "set_italic": r"斜体|italic",
+        "set_underline": r"下划线|underline",
+        "set_highlight": r"高亮|标记",
+        "reorder_paragraphs": r"移到|移动|挪到|重排",
+        "set_paragraph_border": r"段落边框|边框",
+        "set_paragraph_shading": r"段落底纹|底纹|背景色",
+        "insert_footer_text": r"页脚|footer",
+    }
+
+    for action_type, pattern in hints.items():
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            expected.add(action_type)
+
+    if not expected:
+        return False
+
+    llm_hit = len(expected.intersection(llm_types))
+    rule_hit = len(expected.intersection(rule_types))
+    return rule_hit > llm_hit
+
+
+def _looks_like_multi_step_instruction(instruction: str) -> bool:
+    text = instruction or ""
+    if re.search(r"(?:^|\n)\s*(?:\d+|[一二三四五六七八九十]+)\s*[\.、）)]", text):
+        return True
+    segments = _split_instruction_segments(text)
+    return len(segments) >= 3
 
 
 def _call_llm_for_action_plan_json(instruction: str, llm_service, retry: bool = False) -> str:
@@ -569,7 +618,10 @@ def _normalize_llm_payload(payload: Dict[str, Any], instruction: str) -> Dict[st
     normalized: Dict[str, Any] = dict(payload)
 
     normalized["intent"] = str(normalized.get("intent", "extract_content"))
-    normalized["target"] = normalized.get("target") if isinstance(normalized.get("target"), dict) else {"scope": "document"}
+    normalized["target"] = _normalize_action_target_payload(
+        normalized.get("target") if isinstance(normalized.get("target"), dict) else {"scope": "document"},
+        instruction,
+    )
     normalized["params"] = normalized.get("params") if isinstance(normalized.get("params"), dict) else {}
     normalized["params"].setdefault("raw_instruction", instruction)
 
@@ -607,6 +659,46 @@ def _normalize_llm_payload(payload: Dict[str, Any], instruction: str) -> Dict[st
     actions = _post_process_actions(actions, instruction)
 
     normalized["actions"] = actions
+    return normalized
+
+
+def _normalize_action_target_payload(target: Dict[str, Any], instruction: str) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = dict(target or {})
+
+    target_type = str(normalized.get("type", "")).strip().lower()
+    if target_type == "paragraph":
+        index_value = normalized.get("index", normalized.get("paragraph_index", -1))
+        try:
+            paragraph_index = int(index_value)
+        except Exception:
+            paragraph_index = -1
+        if paragraph_index >= 0:
+            normalized["scope"] = "paragraph"
+            normalized["paragraph_index"] = paragraph_index
+            normalized["paragraph_index_basis"] = str(normalized.get("paragraph_index_basis", "body") or "body")
+            normalized.pop("type", None)
+            normalized.pop("index", None)
+
+    if "paragraph_index" in normalized:
+        try:
+            paragraph_index = int(normalized.get("paragraph_index", -1))
+        except Exception:
+            paragraph_index = -1
+        if paragraph_index >= 0:
+            normalized["scope"] = normalized.get("scope") or "paragraph"
+            normalized["paragraph_index"] = paragraph_index
+            normalized["paragraph_index_basis"] = str(normalized.get("paragraph_index_basis", "body") or "body")
+
+    if normalized.get("scope") == "document":
+        return normalized
+
+    section_title = str(normalized.get("section_title", "")).strip()
+    if not section_title:
+        section_title = _extract_section_heading(instruction)
+    if section_title and normalized.get("scope") in {"paragraph", "selective", "all", None, ""}:
+        normalized["scope"] = "section_content"
+        normalized["section_title"] = section_title
+
     return normalized
 
 
@@ -673,6 +765,11 @@ def _normalize_action_params(action_type: str, params: Dict[str, Any], instructi
             replace_text = replace_text or fallback_replace
         normalized["find"] = str(find_text)
         normalized["replace"] = str(replace_text)
+        return normalized
+
+    if action_type == "unify_style":
+        normalized["strategy"] = str(normalized.get("strategy") or "standard")
+        normalized["style_preset"] = str(normalized.get("style_preset") or "standard")
         return normalized
 
     if action_type == "set_font_family":
@@ -760,6 +857,19 @@ def _normalize_action_params(action_type: str, params: Dict[str, Any], instructi
 
 def _normalize_action_target(action_type: str, target: Dict[str, Any], instruction: str) -> Dict[str, Any]:
     normalized = dict(target or {})
+
+    if str(normalized.get("type", "")).strip().lower() == "paragraph" and "paragraph_index" not in normalized:
+        normalized["paragraph_index"] = normalized.get("index", -1)
+
+    if "paragraph_index" in normalized:
+        try:
+            paragraph_index = int(normalized.get("paragraph_index", -1))
+        except Exception:
+            paragraph_index = -1
+        if paragraph_index >= 0:
+            normalized["scope"] = normalized.get("scope") or "paragraph"
+            normalized["paragraph_index"] = paragraph_index
+            normalized["paragraph_index_basis"] = str(normalized.get("paragraph_index_basis", "body") or "body")
 
     if action_type == "bold_heading":
         normalized.setdefault("scope", "heading")
@@ -933,7 +1043,7 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
         return {
             "action_type": action_type,
             "target": {"scope": "document"},
-            "params": {"strategy": "normalize"},
+            "params": {"strategy": "standard", "style_preset": "standard"},
             "confidence": 0.92,
             "requires_confirmation": False,
         }
@@ -1032,10 +1142,7 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
         }
 
     if action_type == "set_font_family":
-        section_title = _extract_section_heading(text)
-        target = {"scope": _extract_text_scope(text)}
-        if section_title:
-            target = {"scope": "section_content", "section_title": section_title}
+        target = _extract_formatting_target(text, llm_service)
         return {
             "action_type": action_type,
             "target": target,
@@ -1045,10 +1152,7 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
         }
 
     if action_type == "set_font_color":
-        section_title = _extract_section_heading(text)
-        target = {"scope": _extract_text_scope(text)}
-        if section_title:
-            target = {"scope": "section_content", "section_title": section_title}
+        target = _extract_formatting_target(text, llm_service)
         return {
             "action_type": action_type,
             "target": target,
@@ -1058,10 +1162,7 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
         }
 
     if action_type == "set_font_size":
-        section_title = _extract_section_heading(text)
-        target = {"scope": _extract_text_scope(text)}
-        if section_title:
-            target = {"scope": "section_content", "section_title": section_title}
+        target = _extract_formatting_target(text, llm_service)
         return {
             "action_type": action_type,
             "target": target,
@@ -1106,8 +1207,11 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
         elif replace_find:
             find_text = replace_find
         else:
+            quoted = re.findall(r"[“\"']([^”\"']+)[”\"']", text)
+            if quoted:
+                find_text = quoted[0].strip()
             m = re.search(r"(?:高亮|标记)[\s\"'“”]*(.+?)(?:[，。；;\n]|\s+$)", text)
-            if m:
+            if m and not find_text:
                 find_text = m.group(1).strip().strip("\"'“”")
         
         return {
@@ -1137,13 +1241,16 @@ def _build_action_payload(action_type: str, text: str, fallback: bool = False, l
 
     if action_type == "insert_footer_text":
         footer_text = _extract_footer_text(text)
+        preserve_existing_page = bool(re.search(r"保留(?:已有)?页码|不覆盖(?:已有)?页码|追加", text))
+        include_page_number = bool(re.search(r"(?:插入|添加|显示|包含).{0,4}页码|带页码", text)) and not preserve_existing_page
         return {
             "action_type": action_type,
             "target": {"scope": "document", "position": "footer"},
             "params": {
                 "text": footer_text,
                 "alignment": "center" if "居中" in text else "left",
-                "include_page_number": True if "页码" in text or "页数" in text else False,
+                "include_page_number": include_page_number,
+                "preserve_existing_page_number": preserve_existing_page,
             },
             "confidence": 0.85,
             "requires_confirmation": True,
@@ -1355,15 +1462,38 @@ def _extract_heading_levels(text: str) -> List[int]:
 
 
 def _extract_reorder_indices(text: str) -> tuple[int, int]:
+    def _parse_zh_num(raw: str) -> int:
+        s = (raw or "").strip()
+        if not s:
+            return 0
+        if s.isdigit():
+            return int(s)
+        zh_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+        if s in zh_map:
+            return zh_map[s]
+        if s.startswith("十") and len(s) == 2 and s[1] in zh_map:
+            return 10 + zh_map[s[1]]
+        if len(s) == 2 and s[0] in zh_map and s[1] == "十":
+            return zh_map[s[0]] * 10
+        if len(s) == 3 and s[0] in zh_map and s[1] == "十" and s[2] in zh_map:
+            return zh_map[s[0]] * 10 + zh_map[s[2]]
+        return 0
+
+    unit = r"(?:段|行)"
+
     patterns = [
-        r"从第\s*(\d+)\s*段(?:移动|挪到|放到|调到|到)第\s*(\d+)\s*段",
-        r"把第\s*(\d+)\s*段(?:移动|挪到|放到|调到)第\s*(\d+)\s*段",
-        r"第\s*(\d+)\s*段.*第\s*(\d+)\s*段",
+        rf"从第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:移动|挪到|放到|调到|到|移到)第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:之后)?",
+        rf"把第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:移动|挪到|放到|调到|到|移到)第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:之后)?",
+        rf"将第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:移动|挪到|放到|调到|到|移到)第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:之后)?",
+        rf"第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:移动|挪到|放到|调到|到|移到).{{0,8}}第\s*([一二三四五六七八九十\d]+)\s*{unit}(?:之后)?",
     ]
     for p in patterns:
         m = re.search(p, text)
         if m:
-            return int(m.group(1)), int(m.group(2))
+            src = _parse_zh_num(m.group(1))
+            dst = _parse_zh_num(m.group(2))
+            if src > 0 and dst > 0:
+                return src, dst
     return 0, 0
 
 
@@ -1539,7 +1669,7 @@ def _split_instruction_segments(text: str) -> List[str]:
     for part in primary:
         sub_parts = [
             s.strip()
-            for s in re.split(r"，(?=再|并|最后|然后|在文档|把正文|将文中|再把|并在|并把)", part)
+            for s in re.split(r"[，,]\s*(?=再|并|最后|然后|在文档|把正文|将文中|再把|并在|并把|并将|并给|并对|并把)", part)
             if s.strip()
         ]
         if sub_parts:
@@ -1553,31 +1683,47 @@ def _split_instruction_segments(text: str) -> List[str]:
 def _find_action_contexts(action_type: str, rule: Dict[str, Any], segments: List[str]) -> List[str]:
     contexts: List[str] = []
     for seg in segments:
-        if action_type == "set_font_family" and re.search(r"(?:颜色|色彩|字号|字大小|字体大小)", seg):
-            # 避免“字体颜色/字号”把字体族动作误触发。
-            if not re.search(r"宋体|黑体|楷体|仿宋|微软雅黑|Times New Roman|Arial|Calibri", seg, flags=re.IGNORECASE):
-                continue
-
-        if action_type == "set_paragraph_alignment" and re.search(r"页脚|页眉|页码", seg):
-            # 避免“页脚居中插入页码”触发正文/全局段落对齐动作。
-            continue
-
-        if action_type == "set_bullet_list" and re.search(r"编号|有序|numbered|numbering", seg, flags=re.IGNORECASE):
-            # 避免编号列表语句被误识别为项目符号列表。
-            continue
-
-        if action_type == "set_numbered_list" and re.search(r"项目符号|无序|bullet", seg, flags=re.IGNORECASE):
-            # 避免项目符号语句被误识别为编号列表。
-            continue
-
-        if _match_by_pattern(seg, rule["patterns"]) or _match_by_keyword_fuzzy(
-            seg,
-            rule["keywords"],
-            action_type=action_type,
-        ):
+        if _segment_matches_action(action_type, rule, seg):
             contexts.append(seg)
 
     return contexts
+
+
+def _segment_matches_action(action_type: str, rule: Dict[str, Any], seg: str) -> bool:
+    if action_type == "replace_text":
+        # 仅当出现明确替换语义时触发，避免“改为宋体/改为斜体”误识别成文本替换。
+        if not re.search(r"替换|查找", seg):
+            return False
+
+    if action_type == "insert_footer_text":
+        # 纯页码+对齐语义由 insert_page_number 负责，避免把提示词文本写进页脚。
+        has_quoted_text = bool(re.search(r"[\"'“”][^\"'“”]+[\"'“”]", seg))
+        if re.search(r"页脚", seg) and re.search(r"页码", seg) and not has_quoted_text:
+            if re.search(r"居中|左对齐|右对齐|显示|插入页码|添加页码", seg) and not re.search(r"追加|附加|文本|内容|写入", seg):
+                return False
+
+    if action_type == "set_font_family" and re.search(r"(?:颜色|色彩|颜色词|字体颜色|文字颜色|紫色|紫|红色|蓝色|黑色|绿色|字号|字大小|字体大小)", seg):
+        # 避免“字体颜色/字号”把字体族动作误触发。
+        if not re.search(r"宋体|黑体|楷体|仿宋|微软雅黑|Times New Roman|Arial|Calibri", seg, flags=re.IGNORECASE):
+            return False
+
+    if action_type == "set_paragraph_alignment" and re.search(r"页脚|页眉|页码", seg):
+        # 避免“页脚居中插入页码”触发正文/全局段落对齐动作。
+        return False
+
+    if action_type == "set_bullet_list" and re.search(r"编号|有序|numbered|numbering", seg, flags=re.IGNORECASE):
+        # 避免编号列表语句被误识别为项目符号列表。
+        return False
+
+    if action_type == "set_numbered_list" and re.search(r"项目符号|无序|bullet", seg, flags=re.IGNORECASE):
+        # 避免项目符号语句被误识别为编号列表。
+        return False
+
+    return _match_by_pattern(seg, rule["patterns"]) or _match_by_keyword_fuzzy(
+        seg,
+        rule["keywords"],
+        action_type=action_type,
+    )
 
 
 def _deduplicate_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1603,6 +1749,79 @@ def _deduplicate_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _post_process_actions(actions: List[Dict[str, Any]], instruction: str) -> List[Dict[str, Any]]:
     if not actions:
         return actions
+
+    for action in actions:
+        action_type = action.get("action_type")
+        params = action.get("params") if isinstance(action.get("params"), dict) else {}
+        target = action.get("target") if isinstance(action.get("target"), dict) else {}
+        segment_text = str(params.get("__segment_text") or instruction)
+
+        def _set_body_paragraph_index(idx: int) -> None:
+            target["scope"] = "paragraph"
+            target["paragraph_index"] = idx
+            target["paragraph_index_basis"] = "body"
+            action["target"] = target
+
+        if action_type == "set_font_family":
+            if params.get("italic"):
+                action["action_type"] = "set_italic"
+                action["params"] = {"italic": True}
+                continue
+            if params.get("underline"):
+                action["action_type"] = "set_underline"
+                action["params"] = {"underline": True}
+                continue
+
+        if action_type == "set_paragraph_alignment":
+            if params.get("border") or str(params.get("border_type", "")).strip().lower() in {"all", "paragraph"}:
+                action["action_type"] = "set_paragraph_border"
+                action["params"] = {"border_type": "all"}
+                continue
+            if params.get("background_color") or params.get("shading_color"):
+                action["action_type"] = "set_paragraph_shading"
+                shading_color = params.get("shading_color") or params.get("background_color") or _extract_shading_color(instruction)
+                action["params"] = {"shading_color": _extract_shading_color(str(shading_color))}
+                continue
+
+        if action_type == "set_highlight":
+            target_text = str(target.get("text") or target.get("target_text") or "").strip()
+            if target_text:
+                params["find"] = target_text
+                action["params"] = params
+
+        if action_type == "reorder_paragraphs":
+            source_index = target.get("paragraph_index")
+            new_index = params.get("new_index")
+            from_idx = params.get("from")
+            to_idx = params.get("to")
+            if (not from_idx or int(from_idx) <= 0) and source_index is not None:
+                try:
+                    params["from"] = int(source_index) + 1
+                except Exception:
+                    pass
+            if (not to_idx or int(to_idx) <= 0) and new_index is not None:
+                try:
+                    params["to"] = int(new_index)
+                except Exception:
+                    pass
+            action["params"] = params
+
+        if action_type in {"set_italic", "set_underline", "set_paragraph_border", "set_paragraph_shading"}:
+            explicit_idx = _extract_explicit_paragraph_index(segment_text)
+            if explicit_idx >= 0:
+                _set_body_paragraph_index(explicit_idx)
+
+    for action in actions:
+        if action.get("action_type") != "set_font_family":
+            continue
+        params = action.get("params") if isinstance(action.get("params"), dict) else {}
+        segment_text = str(params.get("__segment_text") or instruction)
+        color_cue = re.search(r"(?:颜色|色彩|红色|蓝色|黑色|绿色|紫色|紫|orange|yellow|purple|violet)", segment_text, re.IGNORECASE)
+        explicit_font_cue = re.search(r"宋体|黑体|楷体|仿宋|微软雅黑|Times New Roman|Arial|Calibri", segment_text, re.IGNORECASE)
+        if color_cue and not explicit_font_cue:
+            action["action_type"] = "set_font_color"
+            params["color"] = _extract_font_color(segment_text)
+            action["params"] = params
 
     replace_targets = [
         str((a.get("params") or {}).get("replace", "")).strip()
@@ -1634,9 +1853,10 @@ def _post_process_actions(actions: List[Dict[str, Any]], instruction: str) -> Li
         target = action.get("target") if isinstance(action.get("target"), dict) else {}
         alignment = str(params.get("alignment", "")).lower()
         scope = str(target.get("scope", "")).lower()
+        segment_text = str(params.get("__segment_text") or instruction)
 
         # "页脚居中插入页码" 不应生成正文/全局段落居中动作。
-        if alignment == "center" and scope in {"all", "document", "paragraph"} and re.search(r"页脚|页码", instruction):
+        if alignment == "center" and scope in {"all", "document", "paragraph"} and re.search(r"页脚|页码", segment_text):
             continue
 
         filtered.append(action)
@@ -1694,6 +1914,10 @@ def _extract_font_color(text: str) -> str:
         "蓝": "0000FF",
         "蓝色": "0000FF",
         "blue": "0000FF",
+        "紫": "800080",
+        "紫色": "800080",
+        "purple": "800080",
+        "violet": "8A2BE2",
         "黑": "000000",
         "黑色": "000000",
         "black": "000000",
@@ -1793,6 +2017,8 @@ def _extract_table_dimensions(text: str) -> tuple[int, int]:
 
 def _extract_footer_text(text: str) -> str:
     """提取页脚文本内容"""
+    preserve_existing_page = bool(re.search(r"保留(?:已有)?页码|不覆盖(?:已有)?页码|追加", text))
+
     # 优先查找引号内的文本
     m = re.search(r'["\'“”](.+?)["\'“”]', text)
     if m:
@@ -1802,14 +2028,16 @@ def _extract_footer_text(text: str) -> str:
             normalized = re.sub(r"X|x", "{total_pages}", normalized, count=1)
         if re.search(r"第\s*[Xx]\s*页", normalized):
             normalized = re.sub(r"X|x", "{page_number}", normalized, count=1)
-        if "页码" in text and "页脚" in text and "{page_number}" not in normalized:
+        if "页码" in text and "页脚" in text and "{page_number}" not in normalized and not preserve_existing_page:
             normalized = f"第{{page_number}}页，{normalized}" if normalized else "第{page_number}页"
         return normalized
     
     # 查找"页脚"后跟"插入"等动词的文本
-    m = re.search(r"(?:在)?页脚[\s]*(?:插入|添加|写入)[\s]*[\"'“”]?([^\n，。、；;]+)[\"'“”]?", text)
+    m = re.search(r"(?:在)?页脚[\s]*(?:插入|添加|写入|追加|附加)[\s]*[\"'“”]?([^\n，。、；;]+)[\"'“”]?", text)
     if m:
         extracted = m.group(1).strip()
+        if re.search(r"^页码(?:并|且)?(?:居中|左对齐|右对齐|显示)?$", extracted):
+            extracted = ""
         if extracted:
             return extracted
     
@@ -1823,7 +2051,7 @@ def _extract_footer_text(text: str) -> str:
         return "共{total_pages}页"
     
     # 查找包含页码的指令
-    if "页码" in text and "页脚" in text:
+    if "页码" in text and "页脚" in text and not preserve_existing_page:
         return "第{page_number}页"
     
     return "Page {page_number}"
@@ -1865,6 +2093,9 @@ def _extract_shading_color(text: str) -> str:
         "灰色": "D3D3D3",
         "蓝": "ADD8E6",
         "蓝色": "ADD8E6",
+        "紫": "D8BFD8",
+        "紫色": "D8BFD8",
+        "purple": "D8BFD8",
         "绿": "90EE90",
         "绿色": "90EE90",
         "红": "FFB6C1",
@@ -1922,18 +2153,6 @@ def _extract_formatting_target(text: str, llm_service=None) -> Dict[str, Any]:
     - {'scope': 'paragraph', 'paragraph_index': 2}
     - {'scope': 'document'} 如果无法提取
     """
-    def _extract_explicit_paragraph_index(raw_text: str) -> int:
-        paragraph_match = re.search(r"在(?:第)?([一二三四五六七八九十\d]+)(?:段)?", raw_text)
-        if not paragraph_match:
-            return -1
-        para_str = paragraph_match.group(1)
-        chinese_nums = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-        if para_str in chinese_nums:
-            return chinese_nums[para_str] - 1
-        if para_str.isdigit():
-            return int(para_str) - 1
-        return -1
-
     def _extract_explicit_target_text(raw_text: str) -> str:
         target_texts: List[str] = []
         for pattern in [r"'([^']+)'", r'"([^"]+)"']:
@@ -2081,3 +2300,32 @@ def _extract_formatting_target(text: str, llm_service=None) -> Dict[str, Any]:
 
     # LLM 无有效 JSON 时兜底规则
     return _rule_fallback()
+
+
+def _extract_explicit_paragraph_index(raw_text: str) -> int:
+    paragraph_match = re.search(r"(?:在|给|将|把)?(?:第)?([一二三四五六七八九十\d]+)段", raw_text)
+    if not paragraph_match:
+        return -1
+    para_str = paragraph_match.group(1)
+
+    def _parse_zh_num(value: str) -> int:
+        s = (value or "").strip()
+        if not s:
+            return 0
+        if s.isdigit():
+            return int(s)
+        zh_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+        if s in zh_map:
+            return zh_map[s]
+        if s.startswith("十") and len(s) == 2 and s[1] in zh_map:
+            return 10 + zh_map[s[1]]
+        if len(s) == 2 and s[0] in zh_map and s[1] == "十":
+            return zh_map[s[0]] * 10
+        if len(s) == 3 and s[0] in zh_map and s[1] == "十" and s[2] in zh_map:
+            return zh_map[s[0]] * 10 + zh_map[s[2]]
+        return 0
+
+    if para_str.isdigit():
+        return int(para_str) - 1
+    parsed = _parse_zh_num(para_str)
+    return parsed - 1 if parsed > 0 else -1

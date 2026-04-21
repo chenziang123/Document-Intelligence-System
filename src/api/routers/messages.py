@@ -75,10 +75,9 @@ def _pick_table_filling_inputs(files: List[Dict[str, Any]], template_files: List
     """Pick one xlsx source and one template for direct table filling execution."""
 
     source_file = next((f for f in files if str(f.get("file_name", "")).lower().endswith(".xlsx")), None)
-    template_file = next(
-        (f for f in template_files if str(f.get("file_name", "")).lower().endswith((".docx", ".xlsx"))),
-        None,
-    )
+    docx_template = next((f for f in template_files if str(f.get("file_name", "")).lower().endswith(".docx")), None)
+    xlsx_template = next((f for f in template_files if str(f.get("file_name", "")).lower().endswith(".xlsx")), None)
+    template_file = docx_template or xlsx_template
     return source_file, template_file
 
 
@@ -182,20 +181,97 @@ def _ensure_files_in_db(files: List[Dict[str, Any]], session_id: str, cfg, user_
 def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
     """Convert run_agent_d_api result into the legacy frontend-friendly shape."""
 
-    data = response.get("data", {}) if isinstance(response, dict) else {}
-    resolved_input = response.get("resolved_input", {}) if isinstance(response, dict) else {}
+    def _to_dict(obj: Any) -> Dict[str, Any]:
+        if isinstance(obj, dict):
+            return obj
+        if isinstance(obj, str):
+            try:
+                parsed = json.loads(obj)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        if hasattr(obj, "model_dump"):
+            try:
+                dumped = obj.model_dump()
+                return dumped if isinstance(dumped, dict) else {}
+            except Exception:
+                return {}
+        if hasattr(obj, "dict"):
+            try:
+                dumped = obj.dict()
+                return dumped if isinstance(dumped, dict) else {}
+            except Exception:
+                return {}
+        if hasattr(obj, "__dict__"):
+            try:
+                dumped = dict(getattr(obj, "__dict__", {}))
+                return dumped if isinstance(dumped, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    data: Dict[str, Any] = {}
+    resolved_input: Dict[str, Any] = {}
+    resp_dict = _to_dict(response)
+    if resp_dict:
+        data = _to_dict(resp_dict.get("data"))
+        resolved_input = _to_dict(resp_dict.get("resolved_input"))
+
+        # 兼容旧形态：部分字段直接挂在 response 顶层
+        if not data:
+            top_level_candidates = (
+                "status", "reason", "excel_path", "output_json", "template_output",
+                "template_filled", "template_mapping", "multi_table_results",
+                "total_rows", "matched_rows", "used_plan", "plan_source",
+            )
+            if any(k in resp_dict for k in top_level_candidates):
+                data = resp_dict
+
+    template_source = resolved_input.get("template") or data.get("template_source")
+
+    output_json = data.get("output_json") or resolved_input.get("output_json")
+
+    template_output = data.get("template_output") or data.get("output_template")
+    if not template_output:
+        template_output = resolved_input.get("output_template") or resolved_input.get("template_output")
+
+    # 当 Agent 返回了 template_filled 但未显式给出 template_output 时，按默认命名规则回推路径
+    if not template_output and bool(data.get("template_filled")):
+        src_path = data.get("excel_path") or resolved_input.get("src")
+        if src_path and template_source:
+            try:
+                src_obj = Path(str(src_path))
+                tpl_suffix = Path(str(template_source)).suffix.lower() or ".xlsx"
+                inferred = src_obj.parent / f"{src_obj.stem}_filled{tpl_suffix}"
+                template_output = str(inferred)
+            except Exception:
+                template_output = None
+
+    # output_json 兜底：按 AgentD 默认命名规则回推
+    if not output_json:
+        src_path = data.get("excel_path") or resolved_input.get("src")
+        if src_path:
+            try:
+                src_obj = Path(str(src_path))
+                output_json = str(src_obj.parent / f"{src_obj.stem}_filtered_rows.json")
+            except Exception:
+                output_json = None
     return {
-        "success": bool(response.get("success", False)) if isinstance(response, dict) else False,
-        "message": response.get("message", "") if isinstance(response, dict) else "",
+        "success": bool(resp_dict.get("success", False)) if isinstance(resp_dict, dict) else False,
+        "message": resp_dict.get("message", "") if isinstance(resp_dict, dict) else "",
         "status": data.get("status") if isinstance(data, dict) else None,
+        "reason": data.get("reason") if isinstance(data, dict) else None,
+        "multi_target_signal_level": data.get("multi_target_signal_level") if isinstance(data, dict) else None,
+        "multi_target_mode_by_llm": data.get("multi_target_mode_by_llm") if isinstance(data, dict) else None,
         "excel_path": data.get("excel_path") if isinstance(data, dict) else None,
-        "output_json": data.get("output_json") if isinstance(data, dict) else None,
+        "output_json": output_json,
         "total_rows": data.get("total_rows") if isinstance(data, dict) else 0,
         "matched_rows": data.get("matched_rows") if isinstance(data, dict) else 0,
         "used_plan": data.get("used_plan") if isinstance(data, dict) else None,
         "plan_source": data.get("plan_source") if isinstance(data, dict) else None,
         "template_filled": data.get("template_filled") if isinstance(data, dict) else False,
-        "template_output": data.get("template_output") if isinstance(data, dict) else None,
+        "template_output": template_output,
+        "template_source": template_source,
         "template_mapping": data.get("template_mapping") if isinstance(data, dict) else {},
         "multi_table_results": data.get("multi_table_results") if isinstance(data, dict) else None,
         "resolved_input": resolved_input,
@@ -513,12 +589,19 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
 
     # 2. 保存 XLSX 文件（填好的模板）
     template_output = table_filling_data.get("template_output")
+    template_source = table_filling_data.get("template_source")
+    expected_template_suffix = ""
+    if template_source:
+        try:
+            expected_template_suffix = Path(str(template_source)).suffix.lower().lstrip(".")
+        except Exception:
+            expected_template_suffix = ""
     if template_output:
         src_path = Path(template_output)
         if not src_path.is_absolute():
             src_path = Path("workspace") / template_output
         if src_path.exists():
-            ext = src_path.suffix.lower().lstrip(".") or "xlsx"
+            ext = expected_template_suffix or src_path.suffix.lower().lstrip(".") or "xlsx"
             xlsx_name = f"table_filling_result_{session_id[:8]}.{ext}"
             dest_path = uploads_dir / xlsx_name
             try:
@@ -545,7 +628,7 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
                     role="output",
                     storage_key=storage_key,
                 )
-                saved_files.append({"file_id": sf.id, "file_name": xlsx_name, "file_path": str(dest_path), "file_type": "xlsx"})
+                saved_files.append({"file_id": sf.id, "file_name": xlsx_name, "file_path": str(dest_path), "file_type": ext})
                 print(f"[WS] _save_table_filling_files: XLSX保存成功 id={sf.id}")
             except Exception as e:
                 print(f"[WS] _save_table_filling_files: 保存XLSX失败: {e}")
@@ -554,6 +637,38 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
 
     print(f"[WS] _save_table_filling_files 返回: {saved_files}")
     return saved_files
+
+
+def _fallback_table_filling_generated_files(table_filling_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """当数据库保存失败或未命中时，使用 Agent 输出路径构造前端可下载文件列表。"""
+    if not isinstance(table_filling_data, dict):
+        return []
+    out: List[Dict[str, Any]] = []
+    template_source = table_filling_data.get("template_source")
+    expected_template_suffix = ""
+    if template_source:
+        try:
+            expected_template_suffix = Path(str(template_source)).suffix.lower().lstrip(".")
+        except Exception:
+            expected_template_suffix = ""
+    output_json = table_filling_data.get("output_json")
+    if output_json:
+        p = str(output_json)
+        out.append({
+            "file_path": p,
+            "file_name": Path(p).name or "table_filling_result.json",
+            "file_type": "json",
+        })
+    template_output = table_filling_data.get("template_output")
+    if template_output:
+        p = str(template_output)
+        ext = expected_template_suffix or Path(p).suffix.lower().lstrip(".") or "xlsx"
+        out.append({
+            "file_path": p,
+            "file_name": Path(p).name or f"table_filling_result.{ext}",
+            "file_type": ext,
+        })
+    return out
 
 
 def _collect_new_generated_files(session_id: str, cfg, user_id: Optional[str], before_ids: set[int]) -> List[Dict[str, Any]]:
@@ -599,6 +714,7 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
     """
     cfg = load_config()
     current_user = _resolve_current_user(authorization, cfg)
+    print(f"[API] POST /api/messages/{session_id} mode={request.mode or 'auto'} content={request.content[:80]}")
     
     # 检查会话是否存在
     session = get_session_by_id(session_id, config=cfg, user_id=current_user.id if current_user else None)
@@ -637,6 +753,12 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
     if effective_mode == "table_filling":
         source_file, template_file = _pick_table_filling_inputs(db_data_files, db_template_files)
         if source_file and template_file:
+            request_table_targets = []
+            if isinstance(request.metadata, dict):
+                raw_targets = request.metadata.get("table_targets")
+                if isinstance(raw_targets, list):
+                    request_table_targets = raw_targets
+            print(f"[API] 进入 table_filling 直达路径 session_id={session_id} source={source_file.get('file_name')} template={template_file.get('file_name')}")
             response = run_agent_d_api(
                 src=_resolve_file_reference(source_file, cfg, session_id, "source"),
                 prompt=request.content,
@@ -644,9 +766,12 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
                 output_json="",
                 output_template="",
                 allow_rule_fallback=True,
+                table_targets=request_table_targets,
             )
             table_filling_data = _flatten_table_filling_response(response)
+            print(f"[API] table_filling 响应 template_output={table_filling_data.get('template_output')} output_json={table_filling_data.get('output_json')} template_source={table_filling_data.get('template_source')}")
             saved = _save_table_filling_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
+            print(f"[API] table_filling 保存文件: {saved}")
             if saved:
                 table_filling_data["generated_files"] = saved
             preview_rows = _build_table_filling_preview_rows(table_filling_data)
@@ -764,6 +889,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
     elif cfg.auth.require_auth:
         await websocket.close(code=4401, reason="需要登录后访问")
         return
+
+    print(f"[API] WS /api/messages/ws/{session_id} connected")
     
     # 检查会话是否存在
     session = get_session_by_id(session_id, config=cfg, user_id=current_user.id if current_user else None)
@@ -796,6 +923,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             # 这样用户可以随时切换勾选，文件跟随消息
             client_files = data.get("files") or []
             client_templates = data.get("template_files") or []
+            client_table_targets = data.get("table_targets") or []
 
             # 实体提取模式
             if mode == "entity_extraction":
@@ -856,7 +984,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 
                 source_file, template_file = _pick_table_filling_inputs(files, template_files)
                 if source_file and template_file:
-                    print(f"[WS] table_filling 模式开始处理 session_id={session_id} source={source_file.get('file_name')} template={template_file.get('file_name')}")
+                    print(f"[API] WS table_filling 开始处理 session_id={session_id} source={source_file.get('file_name')} template={template_file.get('file_name')}")
                     user_meta: Dict[str, Any] = {"mode": mode}
                     if files:
                         user_meta["files"] = files
@@ -874,27 +1002,75 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         output_json="",
                         output_template="",
                         allow_rule_fallback=True,
+                        table_targets=client_table_targets if isinstance(client_table_targets, list) else None,
                     )
-                    print(f"[WS] run_agent_d_api 完成, 响应长度={len(str(response))}")
+                    print(f"[API] WS run_agent_d_api 完成, 响应长度={len(str(response))}")
+                    if isinstance(response, dict):
+                        data_obj = response.get("data") if isinstance(response.get("data"), dict) else {}
+                        resolved_obj = response.get("resolved_input") if isinstance(response.get("resolved_input"), dict) else {}
+                        print(
+                            f"[API] WS run_agent_d_api 摘要: success={response.get('success')} "
+                            f"status={data_obj.get('status')} reason={data_obj.get('reason')}"
+                        )
+                        print(
+                            f"[API] WS run_agent_d_api 原始字段: "
+                            f"data.output_json={data_obj.get('output_json')} "
+                            f"data.template_output={data_obj.get('template_output')} "
+                            f"resolved.output_json={resolved_obj.get('output_json')} "
+                            f"resolved.output_template={resolved_obj.get('output_template')}"
+                        )
                     table_filling_data = _flatten_table_filling_response(response)
-                    print(f"[WS] table_filling_data before persist: keys={list(table_filling_data.keys())}")
-                    print(f"[WS] table_filling_data excel_path={table_filling_data.get('excel_path')} template_output={table_filling_data.get('template_output')} output_json={table_filling_data.get('output_json')}")
+                    if not table_filling_data.get("success", False):
+                        error_msg = table_filling_data.get("message") or "表格填表失败"
+                        print(
+                            f"[API] WS table_filling 失败: message={error_msg}; "
+                            f"reason={table_filling_data.get('reason')}; "
+                            f"signal={table_filling_data.get('multi_target_signal_level')}; "
+                            f"llm_mode={table_filling_data.get('multi_target_mode_by_llm')}"
+                        )
+                        await manager.send_json(
+                            session_id,
+                            {
+                                "type": "error",
+                                "mode": mode,
+                                "result_type": "table_filling",
+                                "message": error_msg,
+                                "data": table_filling_data,
+                            },
+                        )
+                        add_message(
+                            session_id,
+                            "assistant",
+                            error_msg,
+                            {"mode": mode, "tableFillingData": table_filling_data},
+                            config=cfg,
+                            user_id=current_user.id if current_user else None,
+                        )
+                        continue
+                    print(f"[API] WS table_filling_data keys={list(table_filling_data.keys())}")
+                    print(f"[API] WS table_filling_data template_output={table_filling_data.get('template_output')} output_json={table_filling_data.get('output_json')} template_source={table_filling_data.get('template_source')}")
                     saved = _save_table_filling_files(session_id, cfg, current_user.id if current_user else None, table_filling_data)
-                    print(f"[WS] _save_table_filling_files 返回: {saved}")
+                    print(f"[API] WS _save_table_filling_files 返回: {saved}")
                     if saved:
                         table_filling_data["generated_files"] = saved
                     preview_rows = _build_table_filling_preview_rows(table_filling_data)
                     if preview_rows:
                         table_filling_data["previewData"] = preview_rows
-                        print(f"[WS] table_filling 附加 previewData 行数={len(preview_rows)}")
+                        print(f"[API] WS table_filling 附加 previewData 行数={len(preview_rows)}")
                     full_response = json.dumps(table_filling_data, ensure_ascii=False)
-                    print(f"[WS] 发送 table_filling chunk, 内容长度={len(full_response)}")
+                    print(f"[API] WS 发送 table_filling chunk, 内容长度={len(full_response)}")
                     await manager.send_json(session_id, {"type": "chunk", "content": full_response, "result_type": "table_filling"})
                     add_message(session_id, "assistant", table_filling_data.get("message", ""), {"mode": mode, "tableFillingData": table_filling_data}, config=cfg, user_id=current_user.id if current_user else None)
-                    print(f"[WS] 发送 table_filling done")
-                    done_payload: Dict[str, Any] = {"type": "done"}
-                    if saved:
-                        done_payload["generated_files"] = saved
+                    print(f"[API] WS 发送 table_filling done")
+                    done_payload: Dict[str, Any] = {
+                        "type": "done",
+                        "mode": mode,
+                        "result_type": "table_filling",
+                        "table_filling_data": table_filling_data,
+                    }
+                    final_files = saved if saved else _fallback_table_filling_generated_files(table_filling_data)
+                    if final_files:
+                        done_payload["generated_files"] = final_files
                     await manager.send_json(session_id, done_payload)
                     continue
             elif client_files or client_templates:
@@ -1004,6 +1180,16 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 assistant_meta["generated_files"] = extraction_files
             elif generated_files:
                 assistant_meta["generated_files"] = generated_files
+            elif mode == "table_filling":
+                try:
+                    parsed = json.loads(full_response)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    fallback_files = _fallback_table_filling_generated_files(parsed)
+                    if fallback_files:
+                        assistant_meta["generated_files"] = fallback_files
+                    assistant_meta["tableFillingData"] = parsed
 
             add_message(
                 session_id,
@@ -1014,8 +1200,14 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                 user_id=current_user.id if current_user else None,
             )
             # done 消息带上 generated_files，前端据此显示下载按钮
-            done_payload: Dict[str, Any] = {"type": "done"}
+            done_payload: Dict[str, Any] = {"type": "done", "mode": mode}
             final_files = extraction_files if extraction_files else generated_files
+            if mode == "table_filling" and not final_files:
+                tf_data = assistant_meta.get("tableFillingData")
+                if isinstance(tf_data, dict):
+                    final_files = _fallback_table_filling_generated_files(tf_data)
+                    done_payload["result_type"] = "table_filling"
+                    done_payload["table_filling_data"] = tf_data
             if final_files:
                 done_payload["generated_files"] = final_files
             print(f"[WS] done_payload generated_files: {done_payload.get('generated_files')}")

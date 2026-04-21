@@ -320,6 +320,15 @@ class AgentB(BaseAgent):
     def _is_supported_template(self, template_path: str) -> bool:
         return self._is_excel_template(template_path) or self._is_docx_template(template_path)
 
+    def _resolve_excel_sheet(self, workbook, sheet_name: str, sheet_index: int = 0):
+        if sheet_name and sheet_name in workbook.sheetnames:
+            return workbook[sheet_name]
+
+        if 0 <= sheet_index < len(workbook.worksheets):
+            return workbook.worksheets[sheet_index]
+
+        return workbook.active
+
     def validate_input(self, task_spec: TaskSpec) -> tuple[bool, str]:
         """验证输入"""
         if not task_spec.source_files:
@@ -899,7 +908,8 @@ class AgentB(BaseAgent):
         wb = load_workbook(template_path)
         try:
             sheet_name = str(parameters.get("template_sheet_name", "")).strip() if parameters else ""
-            ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+            sheet_index = int(parameters.get("template_table_index", 0)) if parameters else 0
+            ws = self._resolve_excel_sheet(wb, sheet_name, sheet_index)
 
             header_row = int(parameters.get("template_header_row", 1)) if parameters else 1
             start_row = int(parameters.get("template_start_row", header_row + 1)) if parameters else (header_row + 1)
@@ -954,7 +964,8 @@ class AgentB(BaseAgent):
         try:
             for target in target_results:
                 sheet_name = str(target.get("sheet_name", "")).strip()
-                ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+                sheet_index = int(target.get("table_index", 0))
+                ws = self._resolve_excel_sheet(wb, sheet_name, sheet_index)
 
                 header_row = int(target.get("header_row", 1))
                 start_row = int(target.get("start_row", header_row + 1))
@@ -1693,6 +1704,13 @@ def _read_optional_str(module, name: str, default: str = "") -> str:
     return str(value).strip()
 
 
+def _resolve_input_path(value: str, base_dir: Path) -> str:
+    path = Path(str(value).strip())
+    if path.is_absolute():
+        return str(path.resolve())
+    return str((base_dir / path).resolve())
+
+
 def _read_optional_int(module, name: str, default: int | None = None):
     value = getattr(module, name, default)
     if value is None:
@@ -1776,18 +1794,22 @@ def _infer_table_targets_from_prompt(prompt: str) -> List[Dict[str, Any]]:
         if len(inferred) >= 2:
             return inferred
 
-    # 形态2：行内样式（目标名与条件同一行）
-    inline_matches = re.findall(
-        r"(?:^|\n)\s*((?:表|目标|场景)[^\n：:]{0,60})\s*[：:]\s*([^\n]+)",
-        text,
-        flags=re.M,
+    # 形态2：行内样式（多个目标可能出现在同一行）
+    inline_markers = list(
+        re.finditer(
+            r"((?:表|目标|场景)\s*[A-Za-z0-9一二三四五六七八九十]{1,8})\s*[：:]",
+            text,
+            flags=re.M,
+        )
     )
-    if len(inline_matches) < 2:
+    if len(inline_markers) < 2:
         return []
 
-    for idx, pair in enumerate(inline_matches):
-        name = str(pair[0]).strip() or f"表{idx + 1}"
-        instruction = str(pair[1]).strip().rstrip("。；;")
+    for idx, marker in enumerate(inline_markers):
+        name = str(marker.group(1)).strip() or f"表{idx + 1}"
+        start = marker.end()
+        end = inline_markers[idx + 1].start() if idx + 1 < len(inline_markers) else len(text)
+        instruction = str(text[start:end]).strip().strip("。；;")
         if not instruction:
             continue
         inferred.append(
@@ -2289,8 +2311,12 @@ def run_agent_d_api(
     mode_by_llm = "unknown"
     signal_level = _multi_target_signal_level(normalized_prompt)
 
-    # table_targets 统一由 prompt 推断；外部传入仅为兼容参数，不参与决策。
-    if normalized_prompt:
+    # 优先使用外部传入的 table_targets（例如上游 Agent 自动生成）；为空时再从 prompt 推断。
+    provided_table_targets = _sanitize_inferred_table_targets(table_targets) if table_targets else []
+    if provided_table_targets:
+        inferred_table_targets = provided_table_targets
+        inferred_source = "external"
+    elif normalized_prompt:
         inferred_table_targets = _infer_table_targets_from_prompt(normalized_prompt)
         if inferred_table_targets:
             inferred_source = "rule"
@@ -2385,12 +2411,19 @@ def run_agent_d_from_data_file(data_py: Path) -> Dict[str, Any]:
     """从 data.py 读取参数并调用 run_agent_d_api。"""
 
     m = _load_data_module(Path(data_py))
+    project_root = _project_root()
+
+    src = _read_optional_str(m, "src")
+    template = _read_optional_str(m, "template")
+    output_json = _read_optional_str(m, "output_json")
+    output_template = _read_optional_str(m, "output_template")
+
     return run_agent_d_api(
-        src=_read_optional_str(m, "src"),
+        src=_resolve_input_path(src, project_root) if src else src,
         prompt=_read_optional_str(m, "prompt"),
-        template=_read_optional_str(m, "template"),
-        output_json=_read_optional_str(m, "output_json"),
-        output_template=_read_optional_str(m, "output_template"),
+        template=_resolve_input_path(template, project_root) if template else template,
+        output_json=_resolve_input_path(output_json, project_root) if output_json else output_json,
+        output_template=_resolve_input_path(output_template, project_root) if output_template else output_template,
         allow_rule_fallback=_read_optional_bool(m, "allow_rule_fallback", False),
         table_targets=_read_optional_list(m, "table_targets"),
         template_sheet_name=_read_optional_str(m, "template_sheet_name"),

@@ -232,13 +232,41 @@ function downloadEntitiesJson(msg) {
 /** WebSocket 写在根上；历史消息可能在 metadata.tableFillingData */
 function getTableFillingData(msg) {
   if (!msg || msg.role !== 'assistant') return null
-  return msg.tableFillingData ?? msg.metadata?.tableFillingData ?? null
+  let metadata = msg.metadata
+  if (typeof metadata === 'string') {
+    try {
+      metadata = JSON.parse(metadata)
+    } catch {
+      metadata = null
+    }
+  }
+  return msg.tableFillingData ?? metadata?.tableFillingData ?? metadata?.table_filling_data ?? null
 }
 
 function getTableFillDownloadFiles(msg) {
   const tf = getTableFillingData(msg)
   if (Array.isArray(tf?.generated_files) && tf.generated_files.length) return tf.generated_files
+  if (Array.isArray(tf?.generatedFiles) && tf.generatedFiles.length) return tf.generatedFiles
   if (Array.isArray(msg?.generated_files) && msg.generated_files.length) return msg.generated_files
+  if (Array.isArray(msg?.generatedFiles) && msg.generatedFiles.length) return msg.generatedFiles
+  const fallback = []
+  const templateOutput = tf?.template_output || tf?.output_template
+  if (templateOutput) {
+    const path = String(templateOutput)
+    const suffix = path.split(/[\\/]/).pop()?.split('.').pop() || 'docx'
+    fallback.push({
+      file_path: path,
+      file_name: path.split(/[\\/]/).pop() || `table_filling_result.${suffix}`,
+    })
+  }
+  if (tf?.output_json) {
+    const path = String(tf.output_json)
+    fallback.push({
+      file_path: path,
+      file_name: path.split(/[\\/]/).pop() || 'table_filling_result.json',
+    })
+  }
+  if (fallback.length) return fallback
   return []
 }
 
@@ -535,8 +563,48 @@ function userMessageAttachments(msg) {
                   </div>
                 </div>
               </div>
-              <!-- 实体提取结果：表格预览（与表格填表共用 table-fill-preview 表头/表体样式） -->
-              <div v-if="msg.entitiesData?.length" class="entity-preview table-fill-preview">
+              <!-- 混合模式专用：仅展示统一填表后的结果预览与下载 -->
+              <template v-if="msg.mixedSource === 'merged' && (msg.tableFillingPreview || msg.generated_files?.length)">
+                <div class="entity-preview table-fill-preview">
+                  <div class="entity-preview-header">
+                    <div>
+                      <span class="entity-preview-title">📋 混合填表结果预览</span>
+                      <span v-if="msg.tableFillingPreview?.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
+                        共 {{ msg.tableFillingPreview.matched_rows }} 行
+                      </span>
+                    </div>
+                    <div v-if="msg.generated_files?.length" class="entity-preview-actions">
+                      <button v-for="f in msg.generated_files" :key="f.file_id ?? f.file_path" class="entity-action-btn" @click="downloadResultFile(f)">
+                        {{ getFileExt(f.file_name) }} ↓
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="msg.tableFillingPreview?.previewData?.length" class="entity-table-wrapper">
+                    <table class="entity-table">
+                      <thead>
+                        <tr>
+                          <th v-for="col in tablePreviewColumns(msg.tableFillingPreview.previewData)" :key="col">{{ col }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, ri) in msg.tableFillingPreview.previewData.slice(0, 50)" :key="ri">
+                          <td v-for="col in tablePreviewColumns(msg.tableFillingPreview.previewData)" :key="col">
+                            {{ formatTablePreviewCell(row && row[col] !== undefined ? row[col] : '') }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="entity-preview-more">
+                    已生成混合填表文件，请使用下载按钮查看完整结果。
+                  </div>
+                  <div v-if="(msg.tableFillingPreview?.previewData?.length ?? 0) > 50" class="entity-preview-more">
+                    还有 {{ msg.tableFillingPreview.previewData.length - 50 }} 行未展示，请下载生成文件查看全部
+                  </div>
+                </div>
+              </template>
+              <!-- 非混合模式的实体提取结果：表格预览 -->
+              <div v-else-if="msg.entitiesData?.length && msg.mixedSource !== 'merged'" class="entity-preview table-fill-preview">
                 <div class="entity-preview-header">
                   <span class="entity-preview-title">📊 提取结果预览（共 {{ msg.entitiesData.length }} 条）</span>
                   <div class="entity-preview-actions">
@@ -563,6 +631,50 @@ function userMessageAttachments(msg) {
                 </div>
                 <div v-if="msg.entitiesData.length > 20" class="entity-preview-more">
                   还有 {{ msg.entitiesData.length - 20 }} 条数据，下载完整文件查看全部
+                </div>
+              </div>
+              <!-- 非混合模式的表格填表预览 -->
+              <div v-if="msg.tableFillingPreview && msg.mixedSource !== 'merged'" class="entity-preview table-fill-preview">
+                <div class="entity-preview-header">
+                  <div>
+                    <span class="entity-preview-title">📋 表格结果预览（{{ msg.tableFillingPreview.previewData?.length ?? msg.tableFillingPreview.matched_rows ?? 0 }} 行）</span>
+                    <span v-if="msg.tableFillingPreview.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
+                      命中 {{ msg.tableFillingPreview.matched_rows }}/{{ msg.tableFillingPreview.total_rows ?? '—' }} 行
+                    </span>
+                  </div>
+                </div>
+                <div v-if="msg.tableFillingPreview.previewData?.length" class="entity-table-wrapper">
+                  <table class="entity-table">
+                    <thead>
+                      <tr>
+                        <th v-for="col in tablePreviewColumns(msg.tableFillingPreview.previewData)" :key="col">{{ col }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, ri) in msg.tableFillingPreview.previewData.slice(0, 50)" :key="ri">
+                        <td v-for="col in tablePreviewColumns(msg.tableFillingPreview.previewData)" :key="col">
+                          {{ formatTablePreviewCell(row && row[col] !== undefined ? row[col] : '') }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div v-if="(msg.tableFillingPreview.previewData?.length ?? 0) > 50" class="entity-preview-more">
+                  还有 {{ msg.tableFillingPreview.previewData.length - 50 }} 行未展示，请下载生成文件查看全部
+                </div>
+              </div>
+              <!-- 混合模式或非表格任务的文件下载：独立显示，不与 entitiesData 块冲突 -->
+              <div
+                v-if="msg.generated_files?.length && !getTableFillingData(msg) && msg.entitiesData?.length"
+                class="entity-preview table-fill-preview table-fill-downloads-only"
+              >
+                <div class="entity-preview-header">
+                  <span class="entity-preview-title">📥 表格数据下载</span>
+                  <div class="entity-preview-actions">
+                    <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
+                      {{ getFileExt(f.file_name) }} ↓
+                    </button>
+                  </div>
                 </div>
               </div>
               <!-- 仅文件下载：实体提取等场景；表格填表已在上方标题栏处理，勿与 msg.generated_files 再渲一排 -->

@@ -54,6 +54,102 @@ function loadMessagesCache(sessionId) {
   return readCache(MESSAGES_KEY + sessionId)
 }
 
+function normalizeGeneratedFiles(rawFiles) {
+  if (Array.isArray(rawFiles)) return rawFiles
+  if (!rawFiles) return []
+  if (typeof rawFiles === 'string') {
+    return [{ file_path: rawFiles, file_name: rawFiles.split(/[\\/]/).pop() || 'result' }]
+  }
+  if (typeof rawFiles === 'object') {
+    return [rawFiles]
+  }
+  return []
+}
+
+function fallbackGeneratedFilesFromTableData(tableData) {
+  if (!tableData || typeof tableData !== 'object') return []
+  const out = []
+  const templateOutput = tableData.template_output || tableData.templateOutput
+  const outputJson = tableData.output_json || tableData.outputJson
+  const suffixFromPath = (path) => {
+    if (!path || typeof path !== 'string') return 'file'
+    const ext = path.split(/[\\/]/).pop()?.split('.').pop()
+    return ext ? ext.toLowerCase() : 'file'
+  }
+  if (templateOutput) {
+    const path = String(templateOutput)
+    out.push({
+      file_path: path,
+      file_name: path.split(/[\\/]/).pop() || `table_filling_result.${suffixFromPath(path)}`,
+    })
+  }
+  if (outputJson) {
+    const path = String(outputJson)
+    out.push({
+      file_path: path,
+      file_name: path.split(/[\\/]/).pop() || 'table_filling_result.json',
+    })
+  }
+  return out
+}
+
+function normalizeMessageForResultDisplay(msg) {
+  if (!msg || typeof msg !== 'object') return msg
+  const normalized = { ...msg }
+  let metadata = normalized.metadata
+  if (typeof metadata === 'string') {
+    try {
+      metadata = JSON.parse(metadata)
+    } catch {
+      metadata = null
+    }
+  }
+  if (!metadata || typeof metadata !== 'object') metadata = {}
+
+  const rootGenerated = normalizeGeneratedFiles(
+    normalized.generated_files || normalized.generatedFiles || normalized.output_files
+  )
+  const metaGenerated = normalizeGeneratedFiles(
+    metadata.generated_files || metadata.generatedFiles || metadata.output_files
+  )
+  const finalGenerated = rootGenerated.length > 0 ? rootGenerated : metaGenerated
+  if (finalGenerated.length > 0) {
+    normalized.generated_files = finalGenerated
+  }
+
+  const tf = normalized.tableFillingData || metadata.tableFillingData || metadata.table_filling_data
+  if (tf && typeof tf === 'object') {
+    const tfGenerated = normalizeGeneratedFiles(tf.generated_files || tf.generatedFiles)
+    const tfFallback = fallbackGeneratedFilesFromTableData(tf)
+    normalized.tableFillingData = {
+      ...tf,
+      generated_files: tfGenerated.length > 0 ? tfGenerated : tfFallback,
+    }
+  }
+
+  normalized.metadata = metadata
+  return normalized
+}
+
+function findLatestMixedProgressMessage(messages, taskIndex, fileName = '') {
+  if (!Array.isArray(messages) || messages.length === 0) return null
+  const targetName = String(fileName || '').trim()
+  // 优先按 taskIndex + 文件名从后往前匹配，避免命中历史旧消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!m || m.role !== 'assistant' || !m.isProgressMessage) continue
+    if (m.mixedTaskIndex !== taskIndex) continue
+    if (targetName && String(m.content || '').includes(targetName)) return m
+  }
+  // 回退：仅按 taskIndex 从后往前匹配最近一条
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!m || m.role !== 'assistant' || !m.isProgressMessage) continue
+    if (m.mixedTaskIndex === taskIndex) return m
+  }
+  return null
+}
+
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref([])
   const currentSessionId = ref(null)
@@ -429,7 +525,7 @@ export const useSessionStore = defineStore('session', () => {
   async function loadMessages(sessionId) {
     try {
       const res = await messageApi.list(sessionId)
-      const msgs = Array.isArray(res) ? res : []
+      const msgs = (Array.isArray(res) ? res : []).map(normalizeMessageForResultDisplay)
       if (msgs.length > 0 || currentSessionId.value === sessionId) {
         messages.value = msgs
         saveMessagesCache(sessionId, msgs)
@@ -486,11 +582,12 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
 
-    // 如果有正在发送的连接，不要关闭它
-    if (isSending && ws.value && ws.value.readyState === WebSocket.OPEN) {
-      console.log('[connectWebSocket] 正在发送中，跳过关闭连接')
+    // 已有可用连接时直接复用，避免重复 close/open 造成频繁重连。
+    if (ws.value && (ws.value.readyState === WebSocket.OPEN || ws.value.readyState === WebSocket.CONNECTING)) {
       return
     }
+
+    if (wsConnecting.value) return
 
     // 如果有现有连接，先关闭
     if (ws.value) {
@@ -575,8 +672,27 @@ export const useSessionStore = defineStore('session', () => {
           }
         } else if (data.result_type === 'table_filling') {
           try {
-            const parsed = JSON.parse(data.content)
+            let parsed = null
+            if (typeof data.content === 'string') {
+              parsed = JSON.parse(data.content)
+            } else if (data.content && typeof data.content === 'object') {
+              parsed = data.content
+            }
+            if (!parsed || typeof parsed !== 'object') {
+              throw new Error('table_filling chunk 内容不是有效对象')
+            }
             console.log('[WebSocket onmessage] table_filling parsed, keys:', Object.keys(parsed), 'generated_files:', parsed.generated_files)
+            const normalizedChunkFiles = normalizeGeneratedFiles(
+              parsed.generated_files || parsed.generatedFiles || parsed.output_files
+            )
+            if (!Array.isArray(parsed.generated_files) || parsed.generated_files.length === 0) {
+              const fallbackFiles = fallbackGeneratedFilesFromTableData(parsed)
+              if (normalizedChunkFiles.length > 0) {
+                parsed.generated_files = normalizedChunkFiles
+              } else if (fallbackFiles.length > 0) {
+                parsed.generated_files = fallbackFiles
+              }
+            }
             const lastMsg = messages.value[messages.value.length - 1]
             if (lastMsg && lastMsg.role === 'assistant') {
               lastMsg.tableFillingData = parsed
@@ -615,14 +731,37 @@ export const useSessionStore = defineStore('session', () => {
         showProgressBar.value = false
         progressValue.value = 100
         progressMessage.value = '处理完成'
+        const normalizedDoneFiles = normalizeGeneratedFiles(
+          data.generated_files || data.generatedFiles || data.output_files
+        )
+        const pendingTableData = pendingResultData?.tableFillingData
+        const pendingTableFiles = normalizeGeneratedFiles(
+          pendingTableData?.generated_files || pendingTableData?.generatedFiles
+        )
+        const pendingFallbackFiles = fallbackGeneratedFilesFromTableData(pendingTableData)
+        const finalGeneratedFiles = normalizedDoneFiles.length > 0
+          ? normalizedDoneFiles
+          : (pendingTableFiles.length > 0 ? pendingTableFiles : pendingFallbackFiles)
         // 把 generated_files 存入最后一条助手消息
-        if (data.generated_files) {
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.generated_files = data.generated_files
-            // 表格填表 chunk 与 done 分开发字段时，合并进 tableFillingData 便于前端统一展示/下载
-            if (lastMsg.tableFillingData && typeof lastMsg.tableFillingData === 'object') {
-              lastMsg.tableFillingData.generated_files = data.generated_files
+        if (finalGeneratedFiles.length > 0) {
+          let lastMsg = messages.value[messages.value.length - 1]
+          if (!lastMsg || lastMsg.role !== 'assistant') {
+            lastMsg = {
+              id: Date.now(),
+              role: 'assistant',
+              content: '',
+              created_at: new Date().toISOString(),
+            }
+            messages.value.push(lastMsg)
+          }
+          lastMsg.generated_files = finalGeneratedFiles
+          // 表格填表 chunk 与 done 分开发字段时，合并进 tableFillingData 便于前端统一展示/下载
+          if (lastMsg.tableFillingData && typeof lastMsg.tableFillingData === 'object') {
+            lastMsg.tableFillingData.generated_files = finalGeneratedFiles
+          } else if (pendingTableData && typeof pendingTableData === 'object') {
+            lastMsg.tableFillingData = {
+              ...pendingTableData,
+              generated_files: finalGeneratedFiles,
             }
           }
         }
@@ -631,7 +770,7 @@ export const useSessionStore = defineStore('session', () => {
         }
         if (pendingResolve) {
           const resolveData = { success: true, resp: pendingResultData }
-          if (data.generated_files) resolveData.generated_files = data.generated_files
+          if (finalGeneratedFiles.length > 0) resolveData.generated_files = finalGeneratedFiles
           console.log('[WebSocket onmessage] 调用 pendingResolve', resolveData)
           pendingResolve(resolveData)
           pendingResolve = null
@@ -905,36 +1044,71 @@ export const useSessionStore = defineStore('session', () => {
 
   // 合并混合模式多个任务的实体数据
   async function mergeMixedEntities(results) {
-    const allEntities = []
+    const mergedEntities = []
+    let entityCount = 0
+    let tableRowCount = 0
+
     for (const r of results) {
-      if (r.type === 'entity_extraction') {
-        const entities = r.resp?.extractionData?.entities || []
+      const mode = r?.task?.mode || r?.mode || r?.result_type
+      if (mode === 'entity_extraction') {
+        const entities = r?.resp?.extractionData?.entities || []
         for (const entity of entities) {
-          allEntities.push(entity)
+          if (entity && typeof entity === 'object') {
+            mergedEntities.push(entity)
+            entityCount += 1
+          }
         }
-      } else if (r.type === 'table_filling') {
-        const outputJson = r.resp?.tableFillingData?.output_json
-        const mapping = r.resp?.tableFillingData?.template_mapping || {}
+      } else if (mode === 'table_filling') {
+        const tf = r?.resp?.tableFillingData
+        if (!tf || typeof tf !== 'object') continue
+
+        let rows = []
+        const outputJson = tf.output_json || tf.outputJson
         if (outputJson) {
           try {
-            const url = `/api/files/download?path=${encodeURIComponent(outputJson)}`
+            const url = `/api/files/download?path=${encodeURIComponent(String(outputJson))}`
             const resp = await fetch(url)
-            const rows = await resp.json()
-            for (const row of rows) {
-              const entity = {}
-              for (const [tplCol, srcCol] of Object.entries(mapping)) {
-                const val = row[srcCol]
-                entity[tplCol] = Array.isArray(val) ? val : [val, '']
-              }
-              allEntities.push(entity)
-            }
+            const data = await resp.json()
+            if (Array.isArray(data)) rows = data
           } catch (e) {
-            console.error('加载 output_json 失败:', e)
+            console.warn('[混合模式] 加载 table_filling output_json 失败，回退 preview/filtered_rows:', e)
           }
+        }
+        if (!rows.length) {
+          if (Array.isArray(tf.filtered_rows) && tf.filtered_rows.length) {
+            rows = tf.filtered_rows
+          } else if (Array.isArray(tf.previewData) && tf.previewData.length) {
+            rows = tf.previewData
+          }
+        }
+
+        const mapping = tf.template_mapping && typeof tf.template_mapping === 'object'
+          ? tf.template_mapping
+          : {}
+        const hasMapping = Object.keys(mapping).length > 0
+
+        for (const row of rows) {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+          if (hasMapping) {
+            const entity = {}
+            for (const [tplCol, srcCol] of Object.entries(mapping)) {
+              entity[tplCol] = row[srcCol]
+            }
+            mergedEntities.push(entity)
+          } else {
+            mergedEntities.push(row)
+          }
+          tableRowCount += 1
         }
       }
     }
-    return allEntities
+
+    return {
+      entities: mergedEntities,
+      entityCount,
+      tableRowCount,
+      totalCount: entityCount + tableRowCount,
+    }
   }
 
   // 混合模式主逻辑：按文件类型分发任务
@@ -1037,6 +1211,54 @@ export const useSessionStore = defineStore('session', () => {
       })
       console.log(`[混合模式] 任务 ${i + 1}/${taskList.length} - 收到结果:`, result)
 
+      // WS 偶发丢字段/丢包时，从历史消息回补本次子任务结果
+      if (task.mode === 'table_filling') {
+        const hasLiveGenerated = normalizeGeneratedFiles(result?.generated_files).length > 0
+        const hasLiveTableData = !!(result?.resp?.tableFillingData && typeof result.resp.tableFillingData === 'object')
+        if (!hasLiveGenerated || !hasLiveTableData) {
+          try {
+            const hist = await messageApi.list(currentSessionId.value, { limit: 30, offset: 0 })
+            const normalizedHist = (Array.isArray(hist) ? hist : []).map(normalizeMessageForResultDisplay)
+            for (let h = normalizedHist.length - 1; h >= 0; h--) {
+              const m = normalizedHist[h]
+              if (m?.role !== 'assistant') continue
+              const modeFlag = m?.metadata?.mode || m?.mode
+              const tf = m?.tableFillingData
+              const gf = normalizeGeneratedFiles(m?.generated_files)
+              const looksLikeTableResult = !!tf || gf.length > 0
+              if ((modeFlag === 'table_filling' || looksLikeTableResult) && looksLikeTableResult) {
+                if (!result.resp || typeof result.resp !== 'object') result.resp = {}
+                if (tf && !result.resp.tableFillingData) result.resp.tableFillingData = tf
+                if (gf.length > 0 && normalizeGeneratedFiles(result.generated_files).length === 0) {
+                  result.generated_files = gf
+                }
+                break
+              }
+            }
+          } catch (e) {
+            console.warn('[混合模式] 历史消息回补失败:', e)
+          }
+        }
+      }
+
+      // 将子任务结果回填到对应进度消息，避免因返回字段差异导致下载按钮不显示
+      const progressMsg = findLatestMixedProgressMessage(messages.value, i, task.file?.file_name)
+      if (progressMsg) {
+        const taskGeneratedFiles = normalizeGeneratedFiles(result?.generated_files)
+        if (taskGeneratedFiles.length > 0) {
+          progressMsg.generated_files = taskGeneratedFiles
+        }
+        const taskTableData = result?.resp?.tableFillingData
+        if (taskTableData && typeof taskTableData === 'object') {
+          const tableFiles = normalizeGeneratedFiles(taskTableData.generated_files)
+          const fallbackFiles = fallbackGeneratedFilesFromTableData(taskTableData)
+          progressMsg.tableFillingData = {
+            ...taskTableData,
+            generated_files: tableFiles.length > 0 ? tableFiles : fallbackFiles,
+          }
+        }
+      }
+
       results.push({ task, ...result })
     }
 
@@ -1052,14 +1274,125 @@ export const useSessionStore = defineStore('session', () => {
 
     // 多文件合并结果
     const successfulResults = results.filter(r => r.success)
-    const allEntities = await mergeMixedEntities(successfulResults)
+    const failedResults = results.filter(r => !r.success)
+    const mergeResult = await mergeMixedEntities(successfulResults)
+    const mergedGeneratedFiles = []
+    
+    // 收集所有文件：从成功的任务中收集
+    for (const r of successfulResults) {
+      // 从 r.generated_files 收集（WebSocket done消息中的文件）
+      const gf = normalizeGeneratedFiles(r?.generated_files)
+      if (gf.length > 0) mergedGeneratedFiles.push(...gf)
+      
+      // 从 tableFillingData.generated_files 收集（表格填表的文件）
+      const tf = r?.resp?.tableFillingData
+      if (tf && typeof tf === 'object') {
+        const tfGf = normalizeGeneratedFiles(tf.generated_files)
+        if (tfGf.length > 0) mergedGeneratedFiles.push(...tfGf)
+      }
+    }
+    
+    // 去重处理（防止同一文件被添加多次）
+    const uniqueFiles = []
+    const seenPaths = new Set()
+    for (const f of mergedGeneratedFiles) {
+      if (f?.path && !seenPaths.has(f.path)) {
+        seenPaths.add(f.path)
+        uniqueFiles.push(f)
+      }
+    }
+
+    // 收集表格填表的预览数据
+    let tableFillingPreviewData = null
+    for (const r of successfulResults) {
+      if (r?.task?.mode === 'table_filling' && r?.resp?.tableFillingData) {
+        const tf = r.resp.tableFillingData
+        if (tf && typeof tf === 'object') {
+          tableFillingPreviewData = {
+            previewData: tf.previewData || tf.filtered_rows || [],
+            matched_rows: tf.matched_rows || 0,
+            total_rows: tf.total_rows,
+            success: tf.success,
+          }
+          break  // 只取第一个表格填表结果
+        }
+      }
+    }
+
+    // mixed统一填表：把合并后的实体写入一个模板，生成真正的合并文件
+    let mixedFillFiles = []
+    let mixedFillPreviewData = null
+    if (mergeResult.entities.length > 0 && Array.isArray(template_files) && template_files.length > 0 && currentSessionId.value) {
+      const excelTpl = template_files.find(f => getFileCategory(f?.file_name || '') === 'excel')
+      const selectedTemplate = excelTpl || template_files[0]
+      const templateRef = selectedTemplate?.storage_key || selectedTemplate?.file_path || selectedTemplate?.path || ''
+
+      if (templateRef) {
+        try {
+          const mixedFillResp = await agentApi.mixedFill({
+            session_id: currentSessionId.value,
+            entities: mergeResult.entities,
+            template_file: templateRef,
+            output_json: '',
+            output_template: '',
+          })
+          const mixedData = mixedFillResp?.data || {}
+          mixedFillFiles = normalizeGeneratedFiles(mixedData.file_ids)
+
+          // 用 mixed-fill 的 output_json 构建预览，确保看到的是“合并后”结果
+          if (mixedData.output_json) {
+            try {
+              const url = `/api/files/download?path=${encodeURIComponent(String(mixedData.output_json))}`
+              const resp = await fetch(url)
+              const rows = await resp.json()
+              if (Array.isArray(rows)) {
+                mixedFillPreviewData = {
+                  previewData: rows.slice(0, 50),
+                  matched_rows: rows.length,
+                  total_rows: rows.length,
+                  success: true,
+                }
+              }
+            } catch (e) {
+              console.warn('[混合模式] mixed-fill output_json 预览加载失败:', e)
+            }
+          }
+        } catch (e) {
+          console.error('[混合模式] mixed-fill 调用失败:', e)
+        }
+      }
+    }
+
+    // 构建最终消息
+    let finalContent = ''
+    const totalCount = mergeResult.totalCount
+    const entityCount = mergeResult.entityCount
+    const tableCount = mergeResult.tableRowCount
+    const successCount = successfulResults.length
+    const failCount = failedResults.length
+    
+    if (failCount === 0) {
+      // 全部成功
+      finalContent = `混合模式完成，共 ${totalCount} 条记录（实体: ${entityCount}, 表格: ${tableCount}；来自 ${successCount} 个文件）`
+    } else if (successCount === 0) {
+      // 全部失败
+      const failReasons = failedResults.map(r => `${r.task.file.file_name}: ${r.error || '处理失败'}`).join('; ')
+      finalContent = `混合模式处理失败 (${failCount}/${taskList.length} 个文件): ${failReasons}`
+    } else {
+      // 部分成功部分失败
+      const failReasons = failedResults.map(r => `${r.task.file.file_name}: ${r.error || '处理失败'}`).join('; ')
+      finalContent = `混合模式部分完成 - 成功: ${successCount}, 失败: ${failCount}\n成功结果: 共 ${totalCount} 条记录（实体: ${entityCount}, 表格: ${tableCount}）\n失败原因: ${failReasons}`
+    }
 
     messages.value.push({
       id: Date.now() + 999,
       role: 'assistant',
-      content: `混合模式完成，共 ${allEntities.length} 条记录（来自 ${successfulResults.length} 个文件）`,
+      content: finalContent,
       created_at: new Date().toISOString(),
       mixedSource: 'merged',
+      entitiesData: mergeResult.entities,
+      tableFillingPreview: mixedFillPreviewData || tableFillingPreviewData,
+      generated_files: mixedFillFiles.length > 0 ? mixedFillFiles : uniqueFiles,
     })
   }
 

@@ -15,6 +15,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from utils.document_reader import ExcelReader
 
+from .standard_style import get_standard_style_preset
+
 
 @dataclass
 class ActionExecutionResult:
@@ -189,12 +191,15 @@ class XlsxAdapter:
         ws = self._resolve_sheet(target, params)
         max_row = max(ws.max_row, 1)
         max_col = max(ws.max_column, 1)
-        border = self._build_border({"border_style": "thin", "border_color": params.get("border_color", "000000")})
+        preset = get_standard_style_preset("xlsx") if str(params.get("style_preset", "")).lower() == "standard" else {}
+        merged = {**preset, **params}
 
-        header_font = Font(name=str(params.get("header_font_name", "Calibri")), size=float(params.get("header_font_size", 11)), bold=True)
-        body_font = Font(name=str(params.get("body_font_name", "Calibri")), size=float(params.get("body_font_size", 11)), bold=False)
-        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        body_align = Alignment(horizontal=str(params.get("body_horizontal", "left")), vertical="center", wrap_text=True)
+        border = self._build_border({"border_style": merged.get("border_style", "thin"), "border_color": merged.get("border_color", "000000")})
+
+        header_font = Font(name=str(merged.get("header_font_name", "Calibri")), size=float(merged.get("header_font_size", 11)), bold=True)
+        body_font = Font(name=str(merged.get("body_font_name", "Calibri")), size=float(merged.get("body_font_size", 11)), bold=False)
+        header_align = Alignment(horizontal=str(merged.get("header_horizontal", "center")), vertical="center", wrap_text=True)
+        body_align = Alignment(horizontal=str(merged.get("body_horizontal", "left")), vertical="center", wrap_text=True)
 
         for row_idx in range(1, max_row + 1):
             for col_idx in range(1, max_col + 1):
@@ -211,7 +216,8 @@ class XlsxAdapter:
             "sheet": ws.title,
             "rows": max_row,
             "cols": max_col,
-            "strategy": params.get("strategy", "table_default"),
+            "strategy": merged.get("strategy", "standard"),
+            "style_preset": merged.get("style_preset", "standard"),
         }
 
     def _header_map(self, ws: Worksheet, header_row: int = 1) -> Dict[str, int]:

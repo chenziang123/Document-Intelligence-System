@@ -13,7 +13,7 @@ from core.agents.agent_d import run_agent_d_from_data_file
 
 
 def main() -> None:
-	data_case = sys.argv[1].strip() if len(sys.argv) > 1 else "data6"
+	data_case = sys.argv[1].strip() if len(sys.argv) > 1 else "data7"
 	data_py = ROOT / "tests" / "test_d" / data_case / "data.py"
 	if not data_py.exists():
 		raise SystemExit(f"data case not found: {data_case}")

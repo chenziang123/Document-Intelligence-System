@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .standard_style import get_standard_style_preset
+
 
 @dataclass
 class ActionExecutionResult:
@@ -86,6 +88,7 @@ class MdAdapter:
         return {"level": level, "updated_headings": updated}
 
     def _apply_unify_style(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+        preset = get_standard_style_preset("md") if str(params.get("style_preset", "")).lower() == "standard" else {}
         lines = self.content.splitlines()
         normalized: List[str] = []
 
@@ -112,7 +115,11 @@ class MdAdapter:
         text = "\n".join(with_spacing)
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         self.content = text
-        return {"strategy": params.get("strategy", "normalize"), "updated": True}
+        return {
+            "strategy": params.get("strategy", preset.get("strategy", "standard")),
+            "style_preset": params.get("style_preset", preset.get("style_preset", "standard")),
+            "updated": True,
+        }
 
     def _split_blocks(self) -> List[str]:
         parts = re.split(r"\n\s*\n", self.content.strip())
