@@ -243,11 +243,16 @@ class AgentService:
                 yield part
             return
 
-        # 文档编辑模式：基于文档进行编辑操作，同样使用流式输出
+        # 文档编辑模式：走工作流协调器，进入 AgentA 真实编辑链路
         if mode == "document_editing":
-            agent = await self._get_document_agent(session_id, content, files)
-            async for part in self._stream_sync_generator(agent.stream_chat(content)):
-                yield part
+            task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
+            result = await asyncio.to_thread(self.coordinator.execute, task_spec, progress_callback=progress_callback)
+            await asyncio.sleep(0)
+
+            message = result.message if result else "文档编辑完成"
+            for char in message:
+                yield char
+                await asyncio.sleep(0.005)
             return
 
         # 实体提取模式：返回完整 JSON（非流式），支持进度回调
@@ -255,7 +260,6 @@ class AgentService:
             import json
             task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
 
-            # 在后台线程跑阻塞的 coordinator.execute，主 event loop 的轮询负责处理进度
             result = await asyncio.to_thread(
                 self.coordinator.execute,
                 task_spec,
@@ -263,19 +267,19 @@ class AgentService:
             )
             await asyncio.sleep(0)
 
-            # result.data 是 WorkflowResult，.data 是 AgentResponse，.data.data 才是字典
-            agent_response = result.data if result.data else None
-            inner_data = agent_response.data if agent_response else {}
-            response_data = {
-                "success": result.success,
-                "message": result.message,
-                "entities": inner_data.get("entities") if isinstance(inner_data, dict) else [],
-                "schema": inner_data.get("schema") if isinstance(inner_data, dict) else {},
-                "chunk_count": inner_data.get("chunk_count") if isinstance(inner_data, dict) else 0,
-                "total_extractions": inner_data.get("total_extractions") if isinstance(inner_data, dict) else 0,
-            }
-            yield json.dumps(response_data, ensure_ascii=False)
-            return
+            if mode == "entity_extraction":
+                agent_response = result.data if result and result.data else None
+                inner_data = agent_response.data if agent_response else {}
+                response_data = {
+                    "success": result.success if result else False,
+                    "message": result.message if result else "实体提取失败",
+                    "entities": inner_data.get("entities") if isinstance(inner_data, dict) else [],
+                    "schema": inner_data.get("schema") if isinstance(inner_data, dict) else {},
+                    "chunk_count": inner_data.get("chunk_count") if isinstance(inner_data, dict) else 0,
+                    "total_extractions": inner_data.get("total_extractions") if isinstance(inner_data, dict) else 0,
+                }
+                yield json.dumps(response_data, ensure_ascii=False)
+                return
 
         # 表格填表模式：返回结构化 JSON（非流式）
         if mode == "table_filling":
@@ -289,11 +293,11 @@ class AgentService:
             )
             await asyncio.sleep(0)
 
-            agent_response = result.data if result.data else None
+            agent_response = result.data if result and result.data else None
             inner_data = agent_response.data if agent_response else {}
             response_data = {
-                "success": result.success,
-                "message": result.message,
+                "success": result.success if result else False,
+                "message": result.message if result else "表格填表失败",
                 "status": inner_data.get("status") if isinstance(inner_data, dict) else "completed",
                 "excel_path": inner_data.get("excel_path") if isinstance(inner_data, dict) else None,
                 "output_json": inner_data.get("output_json") if isinstance(inner_data, dict) else None,
@@ -341,6 +345,11 @@ class AgentService:
         if mode == "document_understanding":
             agent = await self._get_document_agent(session_id, content, files)
             return agent.chat(content)
+
+        if mode == "document_editing":
+            task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
+            result = await asyncio.to_thread(self.coordinator.execute, task_spec)
+            return result.message if result else "文档编辑完成"
 
         # 其他模式
         task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)

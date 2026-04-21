@@ -1652,6 +1652,14 @@ def _split_instruction_segments(text: str) -> List[str]:
 
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
+    # 先尝试解析“单行编号列表”（例如：1. ... 2. ... 3. ...），
+    # 前端聊天输入常见这种形态，若不拆分会导致多个动作共用整段上下文而串扰。
+    marker = r"(?:\d+\.(?!\d)|\d+[、）)]|[一二三四五六七八九十]+[\.、）)])"
+    inline_pattern = rf"(?:^|\s)({marker})\s*(.+?)(?=(?:\s+{marker}\s*)|$)"
+    inline_items = [m.group(2).strip(" \t\n；;。") for m in re.finditer(inline_pattern, normalized)]
+    if len(inline_items) >= 2:
+        return inline_items
+
     # 优先按编号列表拆分（如 1. / 2、 / 3）），每一条通常对应一个动作。
     numbered_split = re.split(r"(?:^|\n)\s*(?:\d+|[一二三四五六七八九十]+)\s*[\.、）)]\s*", normalized)
     numbered_items = [item.strip(" \t\n；;。") for item in numbered_split if item.strip(" \t\n；;。")]

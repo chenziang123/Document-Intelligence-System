@@ -25,6 +25,9 @@ python-multipart>=0.0.9
 # Azure Blob Storage
 azure-storage-blob>=12.20.0
 
+# Qiniu Object Storage
+qiniu>=7.14.0
+
 # LLM
 langchain-openai>=0.1.0
 

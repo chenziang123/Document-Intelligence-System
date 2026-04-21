@@ -85,21 +85,34 @@ class AgentB(BaseAgent):
         )
 
     def _init_extraction_model(self):
-        """初始化 langextract 模型，使用 DeepSeek。"""
+        """初始化 langextract 模型，按 LLM_PROVIDER 动态选择 provider。"""
         try:
             from langextract import factory
-            from core.llm.providers import deepseek_provider  # noqa: F401
+            # 导入 providers 包以触发 provider 注册
+            from core.llm import providers  # noqa: F401
         except Exception as exc:
             self.logger.error(f"langextract 初始化失败: {exc}")
             return None
 
-        # 统一使用 DeepSeek
-        provider_name = "DeepSeekLanguageModel"
         model_id = self.config.llm.model or "deepseek-chat"
-        api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
+        llm_provider = (self.config.llm.provider or os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
+
+        # 优先按显式 provider 选择；若 provider 未识别，则按模型名前缀自动推断
+        if llm_provider in ("zhipu", "glm"):
+            provider_name = "ZhipuLanguageModel"
+            api_key = os.getenv("ZHIPU_API_KEY") or self.config.llm.api_key
+        elif llm_provider == "deepseek":
+            provider_name = "DeepSeekLanguageModel"
+            api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
+        elif str(model_id).lower().startswith("glm"):
+            provider_name = "ZhipuLanguageModel"
+            api_key = os.getenv("ZHIPU_API_KEY") or self.config.llm.api_key
+        else:
+            provider_name = "DeepSeekLanguageModel"
+            api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
 
         if not api_key:
-            self.logger.warning("未检测到提取模型 API Key，后续将回退到规则抽取")
+            self.logger.warning(f"未检测到提取模型 API Key(provider={provider_name})，后续将回退到规则抽取")
             return None
 
         model_config = factory.ModelConfig(

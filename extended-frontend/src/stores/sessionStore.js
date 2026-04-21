@@ -32,6 +32,13 @@ function removeCache(key) {
   } catch {}
 }
 
+let messageIdCounter = 0
+
+function createMessageId(prefix = 'msg') {
+  messageIdCounter += 1
+  return `${prefix}_${Date.now()}_${messageIdCounter}_${Math.random().toString(36).slice(2, 8)}`
+}
+
 function getFileCategory(fileName) {
   if (/.(docx?|pdf|txt|md)$/i.test(fileName)) return 'document'
   if (/.(xlsx?|csv)$/i.test(fileName)) return 'excel'
@@ -91,6 +98,57 @@ function fallbackGeneratedFilesFromTableData(tableData) {
     })
   }
   return out
+}
+
+async function loadJsonRowsFromArtifacts(sessionId, tableData, generatedFiles = []) {
+  const candidates = []
+  const outputJson = tableData?.output_json || tableData?.outputJson
+  if (outputJson) {
+    candidates.push({ kind: 'path', value: outputJson })
+  }
+
+  for (const artifact of [...normalizeGeneratedFiles(tableData?.generated_files), ...normalizeGeneratedFiles(generatedFiles)]) {
+    if (!artifact || typeof artifact !== 'object') continue
+    if (artifact.file_id != null) {
+      candidates.push({ kind: 'session_file', file_id: artifact.file_id })
+    }
+    if (artifact.file_path) {
+      candidates.push({ kind: 'path', value: artifact.file_path })
+    }
+  }
+
+  const toRows = (parsed) => {
+    if (Array.isArray(parsed)) return parsed
+    if (!parsed || typeof parsed !== 'object') return []
+    if (Array.isArray(parsed.rows)) return parsed.rows
+    if (Array.isArray(parsed.filtered_rows)) return parsed.filtered_rows
+    if (Array.isArray(parsed.previewData)) return parsed.previewData
+    if (Array.isArray(parsed.entities)) return parsed.entities
+    return []
+  }
+
+  for (const candidate of candidates) {
+    try {
+      let response = null
+      if (candidate.kind === 'session_file' && sessionId && candidate.file_id != null) {
+        const url = `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(candidate.file_id)}/download`
+        response = await fetch(url)
+      } else if (candidate.kind === 'path' && candidate.value) {
+        const url = `/api/files/download?path=${encodeURIComponent(String(candidate.value))}`
+        response = await fetch(url)
+      }
+
+      if (!response || !response.ok) continue
+
+      const parsed = await response.json()
+      const rows = toRows(parsed)
+      if (rows.length > 0) return rows
+    } catch (e) {
+      continue
+    }
+  }
+
+  return []
 }
 
 function normalizeMessageForResultDisplay(msg) {
@@ -354,11 +412,11 @@ export const useSessionStore = defineStore('session', () => {
       'default_conversation': '默认对话',
       'document_understanding': '文档理解',
       'document_editing': '文档编辑',
-      'mixed': '混合模式',
+      'mixed': '提取与填表',
     }
 
     messages.value.push({
-      id: Date.now(),
+      id: createMessageId('system'),
       role: 'system',
       content: `已切换至「${modeNames[mode] || mode}」模式`,
       created_at: new Date().toISOString(),
@@ -658,7 +716,7 @@ export const useSessionStore = defineStore('session', () => {
               lastMsg.entitiesData = entities
             } else {
               messages.value.push({
-                id: Date.now(),
+                id: createMessageId('assistant'),
                 role: 'assistant',
                 content: summary,
                 created_at: new Date().toISOString(),
@@ -698,7 +756,7 @@ export const useSessionStore = defineStore('session', () => {
               lastMsg.tableFillingData = parsed
             } else {
               messages.value.push({
-                id: Date.now(),
+                id: createMessageId('assistant'),
                 role: 'assistant',
                 content: parsed.message || '',
                 created_at: new Date().toISOString(),
@@ -717,7 +775,7 @@ export const useSessionStore = defineStore('session', () => {
             lastMsg.content += data.content
           } else {
             messages.value.push({
-              id: Date.now(),
+              id: createMessageId('assistant'),
               role: 'assistant',
               content: data.content,
               created_at: new Date().toISOString(),
@@ -747,7 +805,7 @@ export const useSessionStore = defineStore('session', () => {
           let lastMsg = messages.value[messages.value.length - 1]
           if (!lastMsg || lastMsg.role !== 'assistant') {
             lastMsg = {
-              id: Date.now(),
+              id: createMessageId('assistant'),
               role: 'assistant',
               content: '',
               created_at: new Date().toISOString(),
@@ -916,7 +974,7 @@ export const useSessionStore = defineStore('session', () => {
     console.log('[sendMessage] 发送消息:', { content, effectiveMode, hasPendingFiles, uploadedFiles, uploadedTemplateFiles, tempFiles: tempFiles.length, tempTemplateFiles: tempTemplateFiles.length })
 
     // 立即显示用户消息（带待上传状态的文件）
-    const tempMsgId = Date.now()
+    const tempMsgId = createMessageId('user')
     const pendingFiles = [
       ...uploadedFiles.map(f => ({ ...f, pending: false })),
       ...uploadedTemplateFiles.map(f => ({ ...f, pending: false })),
@@ -986,7 +1044,7 @@ export const useSessionStore = defineStore('session', () => {
     console.log('[sendToBackend] 发送请求:', { sessionId, content, mode, files, template_files })
     
     // 添加助手 loading 消息（立即显示）
-    loadingMsgId = Date.now()
+    loadingMsgId = createMessageId('assistant-loading')
     messages.value.push({
       id: loadingMsgId,
       role: 'assistant',
@@ -1030,7 +1088,7 @@ export const useSessionStore = defineStore('session', () => {
       } catch (e) {
         console.error('[sendToBackend] 发送消息失败:', e)
         messages.value.push({
-          id: Date.now(),
+          id: createMessageId('assistant'),
           role: 'assistant',
           content: `发送失败: ${e.message}`,
           created_at: new Date().toISOString(),
@@ -1062,23 +1120,16 @@ export const useSessionStore = defineStore('session', () => {
         const tf = r?.resp?.tableFillingData
         if (!tf || typeof tf !== 'object') continue
 
-        let rows = []
-        const outputJson = tf.output_json || tf.outputJson
-        if (outputJson) {
-          try {
-            const url = `/api/files/download?path=${encodeURIComponent(String(outputJson))}`
-            const resp = await fetch(url)
-            const data = await resp.json()
-            if (Array.isArray(data)) rows = data
-          } catch (e) {
-            console.warn('[混合模式] 加载 table_filling output_json 失败，回退 preview/filtered_rows:', e)
-          }
-        }
+        const rows = await loadJsonRowsFromArtifacts(
+          currentSessionId.value,
+          tf,
+          r?.generated_files || []
+        )
         if (!rows.length) {
           if (Array.isArray(tf.filtered_rows) && tf.filtered_rows.length) {
-            rows = tf.filtered_rows
+            rows.push(...tf.filtered_rows)
           } else if (Array.isArray(tf.previewData) && tf.previewData.length) {
-            rows = tf.previewData
+            rows.push(...tf.previewData)
           }
         }
 
@@ -1167,7 +1218,7 @@ export const useSessionStore = defineStore('session', () => {
 
       // 添加任务进度消息
       messages.value.push({
-        id: Date.now() + i,
+        id: createMessageId('progress'),
         role: 'assistant',
         content: currentProgressMsg,
         created_at: new Date().toISOString(),
@@ -1180,7 +1231,7 @@ export const useSessionStore = defineStore('session', () => {
       const canStream = await waitForWebSocketOpen()
       if (!canStream || !ws.value || ws.value.readyState !== WebSocket.OPEN) {
         messages.value.push({
-          id: Date.now() + i + 1000,
+          id: createMessageId('assistant'),
           role: 'assistant',
           content: 'WebSocket 连接失败，请重试',
           created_at: new Date().toISOString(),
@@ -1340,21 +1391,13 @@ export const useSessionStore = defineStore('session', () => {
           mixedFillFiles = normalizeGeneratedFiles(mixedData.file_ids)
 
           // 用 mixed-fill 的 output_json 构建预览，确保看到的是“合并后”结果
-          if (mixedData.output_json) {
-            try {
-              const url = `/api/files/download?path=${encodeURIComponent(String(mixedData.output_json))}`
-              const resp = await fetch(url)
-              const rows = await resp.json()
-              if (Array.isArray(rows)) {
-                mixedFillPreviewData = {
-                  previewData: rows.slice(0, 50),
-                  matched_rows: rows.length,
-                  total_rows: rows.length,
-                  success: true,
-                }
-              }
-            } catch (e) {
-              console.warn('[混合模式] mixed-fill output_json 预览加载失败:', e)
+          const rows = await loadJsonRowsFromArtifacts(currentSessionId.value, mixedData, mixedFillFiles)
+          if (rows.length > 0) {
+            mixedFillPreviewData = {
+              previewData: rows.slice(0, 50),
+              matched_rows: rows.length,
+              total_rows: rows.length,
+              success: true,
             }
           }
         } catch (e) {
@@ -1385,7 +1428,7 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     messages.value.push({
-      id: Date.now() + 999,
+      id: createMessageId('assistant'),
       role: 'assistant',
       content: finalContent,
       created_at: new Date().toISOString(),

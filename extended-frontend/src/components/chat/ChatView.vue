@@ -31,7 +31,7 @@ const modeLabels = {
   default_conversation: '默认对话',
   document_understanding: '文档理解',
   document_editing: '文档编辑',
-  mixed: '混合模式'
+  mixed: '提取与填表'
 }
 
 function switchChatMode(mode) {
