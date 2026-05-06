@@ -40,9 +40,17 @@ export const useLibraryStore = defineStore('library', () => {
         created_at: s.created_at,
         updated_at: s.updated_at,
       }))
-      // 自动选择第一个空间
-      if (spaces.value.length > 0 && !currentSpaceId.value) {
-        selectSpace(spaces.value[0].id)
+      // 左侧 doc_count 来自服务端；若仍用本地 docs 缓存，列表会与数字不一致（如工作流入库后）
+      docsCache.value = {}
+      if (spaces.value.length === 0) {
+        currentSpaceId.value = null
+        currentDocs.value = []
+      } else {
+        if (!currentSpaceId.value) {
+          clearSelection()
+          currentSpaceId.value = spaces.value[0].id
+        }
+        await loadDocs(currentSpaceId.value, true)
       }
     } catch (e) {
       error.value = e.message || '加载空间列表失败'

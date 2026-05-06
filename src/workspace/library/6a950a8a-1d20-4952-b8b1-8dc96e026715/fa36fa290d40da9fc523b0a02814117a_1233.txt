@@ -1,0 +1,46 @@
+**1  
+Topic Selection**  
+
+I will directly help you choose and explain the reasons. **Selection: Physical AI**  
+
+This is definitely simpler, easier to execute, and more likely to earn high scores.  
+
+**1. Abundant resources and easy demo creation**  
+Robots, simulation environments, and sensor data are all readily available as open-source resources (Isaac Gym, MuJoCo). You can easily run a small experiment for demonstration.  
+
+**2. No need to tackle hardcore scientific knowledge**  
+AI for Science requires expertise in physics, chemistry, biology, and materials science. If your team is not from a science background, you are likely to get stuck.  
+Physical AI is more engineering- and algorithm-oriented, and can be handled purely from a computer science/data science perspective.  
+
+**3. Data is easier to understand**  
+Physical data consists of sensors, videos, radar, and motion sequences—intuitive and easy to explain.  
+Scientific AI data (proteins, quantum, climate) is highly abstract.  
+
+**4. Easy to present in a 5-minute report**  
+Robots, simulations, embodied intelligence, VLA/WAM models—these are visually compelling and engaging for instructors.  
+
+**Topic: Embodied Intelligence Task Demonstration Based on Simulation Environment**  
+
+Content options:  
+- Simple robot grasping/movement  
+- Basic concept of sim-to-real  
+- Multimodal sensor data fusion (vision + IMU)  
+- Run a small experiment using an open-source dataset and present the results  
+
+No complex innovation is required. As long as it runs, includes visuals, and shows results, you will get a high score.  
+
+**Why Physical AI is Simpler**  
+
+**Simplest topic direction for your team (use directly)**  
+●  
+●  
+●  
+●  
+
+**2**  
+👉 **Your team should choose: 2) Physical AI**  
+**Simplest, most stable, and least likely to fail.**  
+
+Do you need me to draft a 5-minute presentation PPT outline for you now?  
+
+**Final Conclusion**

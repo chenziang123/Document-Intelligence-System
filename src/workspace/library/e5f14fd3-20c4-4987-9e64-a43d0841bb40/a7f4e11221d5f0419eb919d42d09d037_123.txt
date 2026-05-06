@@ -1,0 +1,44 @@
+**1. Topic Selection**  
+I will directly select the topic for you and explain the reasoning. The choice is: **Physical AI (Embodied Intelligence)**  
+
+This is absolutely simpler, easier to execute, and more likely to earn high marks.  
+
+**1. Abundant Resources & Easy Demo Implementation**  
+Robots, simulation environments, and sensor data are all readily available as open-source resources (Isaac Gym, MuJoCo). You can easily run a small experiment for demonstration.  
+
+**2. No Need for Hardcore Scientific Knowledge**  
+AI for Science requires expertise in physics, chemistry, biology, and materials science. If your background is not in the sciences, you are likely to hit a dead end.  
+Physical AI, on the other hand, is engineering- and algorithm-oriented, and can be tackled purely from a computer science/data science perspective.  
+
+**3. Data is Easier to Understand**  
+Physical data consists of sensors, videos, radar, and motion sequences—intuitive and easy to explain.  
+Scientific AI data (proteins, quantum, climate) is highly abstract.  
+
+**4. Ideal for a 5-Minute Presentation**  
+Robots, simulations, embodied intelligence, VLA/WAM models—these are visually compelling and engaging for the audience.  
+
+**Topic: Embodied Intelligence Task Demonstration Based on Simulation Environments**  
+
+**Content Options:**  
+- Simple robot grasping/movement  
+- Basic sim-to-real concepts  
+- Multimodal sensor data fusion (vision + IMU)  
+- Run a small experiment using an open-source dataset and present the results  
+
+No complex innovation is required. As long as the demo runs, includes visuals, and shows results, you will score high.  
+
+**Why Physical AI is Simpler**  
+
+**Your Easiest Topic Direction (Ready to Use)**  
+●  
+●  
+●  
+●  
+
+**2**  
+👉 **Your group should choose: 2) Physical AI (Embodied Intelligence)**  
+It is the simplest, most stable, and least likely to go wrong.  
+
+Do you need me to draft a 5-minute presentation PPT outline for you now?  
+
+**Final Conclusion**

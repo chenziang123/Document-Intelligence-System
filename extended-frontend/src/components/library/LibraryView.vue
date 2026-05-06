@@ -8,6 +8,10 @@ const libraryStore = useLibraryStore()
 function onSearch(event) {
   libraryStore.setSearchQuery(event.target.value)
 }
+
+function clearSearch() {
+  libraryStore.setSearchQuery('')
+}
 </script>
 
 <template>
@@ -23,15 +27,16 @@ function onSearch(event) {
         <div class="search-box">
           <span class="search-icon">🔍</span>
           <input
-            v-model="searchInput"
+            :value="libraryStore.searchQuery"
             class="search-input"
             placeholder="搜索文档..."
             @input="onSearch"
           />
           <button
-            v-if="searchInput"
+            v-if="libraryStore.searchQuery"
             class="search-clear"
-            @click="searchInput = ''; libraryStore.setSearchQuery('')"
+            type="button"
+            @click="clearSearch"
           >
             ×
           </button>

@@ -22,7 +22,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -32,6 +32,7 @@ from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import FileInfo, FileType, TaskSpec, TaskType
 from core.storage import build_blob_name, upload_file_to_storage
 from db.auth_repository import resolve_user_from_authorization
+from db.connection import is_database_configured
 from db.workflow_repository import db_load_execution_states, db_save_execution_states, is_db_enabled
 from db.session_repository import add_session_file, get_session_by_id
 from utils.logger import get_logger
@@ -138,11 +139,18 @@ class TemplateResponse(BaseModel):
 
 
 def _get_output_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
-    """从节点列表中提取输出节点配置。"""
+    """从节点列表中提取输出节点配置。优先「输出文件/文档库」节点，否则用第一个输出节点。"""
+    first_output: Dict[str, Any] = {}
     for node in nodes:
-        if node.type == "output":
-            return node.configValues or {}
-    return {}
+        if node.type != "output":
+            continue
+        cv = dict(node.configValues or {})
+        if not first_output:
+            first_output = cv
+        # 画布上可能存在多个输出型节点时的歧义处理
+        if node.schemaKey == "schema-library-output":
+            return cv
+    return first_output
 
 
 def _get_input_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
@@ -278,6 +286,23 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
         translation_config = _get_translation_config(params.nodes)
         target_language = _normalize_lang(translation_config.get("targetLanguage", "中文"))
 
+        if str(output_mode).lower() == "library" and not target_space_id:
+            state["logs"].append(
+                {
+                    "type": "warn",
+                    "message": "输出模式为「保存到文档库」，但未选择目标文档库；文件只会生成在工作流输出目录，不会出现在文档库列表。请在输出节点选择目标库后重试。",
+                }
+            )
+        elif str(output_mode).lower() == "library" and not (
+            config.database.enabled and is_database_configured(config)
+        ):
+            state["logs"].append(
+                {
+                    "type": "warn",
+                    "message": "文档库入库需要 PostgreSQL：请在 .env 中启用 DB_ENABLED 并配置 DATABASE_URL（或其它 DB_*）。当前数据库未就绪，仅能下载/查看本地输出路径。",
+                }
+            )
+
         # ===== 保存本地文件到磁盘 =====
         saved_local_files: List[Dict[str, Any]] = []  # [{path, name, size}]
         if params.localFiles:
@@ -405,9 +430,14 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
             _persist_execution_states(config)
 
-            if output_mode == "library" and target_space_id and out_path:
-                _save_output_to_library(str(out_path), target_space_id, config)
-                state["logs"].append({"type": "done", "message": f"  已保存到文档库: {out_name}"})
+            if str(output_mode).lower() == "library" and out_path:
+                if target_space_id:
+                    ok_lib, lib_msg = _save_output_to_library(str(out_path), str(target_space_id), config)
+                    if ok_lib:
+                        state["logs"].append({"type": "done", "message": f"  已保存到文档库: {out_name}"})
+                    else:
+                        state["logs"].append({"type": "error", "message": f"  文档库入库失败: {lib_msg}"})
+                # 未选目标库时在任务开头已有 warn，此处不再重复
 
         # ===== 完成 =====
         state["progress"] = 100
@@ -438,48 +468,61 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
         _persist_execution_states(config)
 
 
-def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig):
-    """将输出文件保存到文档库。"""
+def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig) -> Tuple[bool, str]:
+    """将输出文件保存到文档库（写存储 + PostgreSQL 登记）。返回 (是否成功, 错误说明)。"""
+    if not (config.database.enabled and is_database_configured(config)):
+        return False, "数据库未启用或未配置，无法写入 library_documents"
+
     try:
-        from db.library_repository import add_library_doc
-        from pathlib import Path
+        from db.library_repository import add_library_doc, get_library_space_by_id
         import hashlib
 
         p = Path(file_path)
+        if not p.is_file():
+            return False, f"输出文件不存在: {file_path}"
+
+        # 与手动上传一致：登记为空间所属用户，否则已登录用户列表会带 user_id 条件，看不到 user_id 为空的记录
+        space_row = get_library_space_by_id(space_id, config=config, user_id=None)
+        owner_user_id = space_row.user_id if space_row else None
+
         with open(p, "rb") as f:
             content_bytes = f.read()
         file_size = len(content_bytes)
         file_hash = hashlib.md5(content_bytes).hexdigest()
         safe_name = f"{file_hash}_{p.name}"
 
-        storage_key = None
+        storage_key: Optional[str] = None
         if config.storage.enabled and config.storage.provider == "azure_blob":
             from core.storage import build_blob_name, upload_stream_to_storage
             from io import BytesIO
-            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.azure_blob_prefix)
+
+            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.azure_blob_prefix or "workflows")
             storage_key = upload_stream_to_storage(
-                BytesIO(content_bytes), config=config, blob_name=blob_name,
+                BytesIO(content_bytes),
+                config=config,
+                blob_name=blob_name,
                 content_type="application/octet-stream",
             )
         else:
-            upload_dir = Path("workspace/library") / space_id
+            upload_dir = Path(config.work_dir) / "library" / space_id
             upload_dir.mkdir(parents=True, exist_ok=True)
             storage_key = str(upload_dir / safe_name)
-            with open(storage_key, "wb") as f:
-                f.write(content_bytes)
+            Path(storage_key).write_bytes(content_bytes)
 
         add_library_doc(
             space_id=space_id,
             file_name=p.name,
             file_size=file_size,
             config=config,
-            user_id=None,
+            user_id=owner_user_id,
             mime_type="application/octet-stream",
             storage_key=storage_key,
             blob_url=storage_key,
         )
+        return True, ""
     except Exception as e:
         logger.warning(f"保存到文档库失败: {e}")
+        return False, str(e)
 
 
 # ==================== API 端点 ====================

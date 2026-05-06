@@ -33,6 +33,7 @@ langchain-openai>=0.1.0
 
 # PDF处理
 pypdf>=4.0.0
+reportlab>=4.0.0
 
 # 测试
 pytest>=8.0.0
