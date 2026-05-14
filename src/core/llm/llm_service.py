@@ -14,6 +14,31 @@ from config import get_config, LLMConfig
 from utils.logger import get_logger
 
 
+def _normalize_ai_content(content: Any) -> str:
+    """
+    LangChain / OpenAI 兼容接口下 content 可能为 str，或块列表
+    [{"type":"text","text":"..."}]；统一为纯文本，避免 str += list 抛错。
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and "text" in block:
+                    parts.append(str(block.get("text", "")))
+                elif "text" in block:
+                    parts.append(str(block.get("text", "")))
+            else:
+                parts.append(str(block))
+        return "".join(parts)
+    return str(content)
+
+
 def strip_markdown(text: str) -> str:
     """移除文本中的markdown格式符号"""
     # 移除粗体、斜体等
@@ -44,12 +69,12 @@ class MarkdownFilterCallback(BaseCallbackHandler):
         self._buffer = ""
         self._first = True
 
-    def on_llm_new_token(self, token: str, **kwargs) -> None:
+    def on_llm_new_token(self, token: Any, **kwargs) -> None:
         """每个新 token 到达时调用"""
         if self._first and self.prefix:
             self._first = False
 
-        self._buffer += token
+        self._buffer += _normalize_ai_content(token)
 
         # 整行处理更干净
         if '\n' in self._buffer:
@@ -187,7 +212,7 @@ class LLMService:
             )
         else:
             response = client.invoke(langchain_messages)
-            return response.content
+            return _normalize_ai_content(response.content)
 
     def _convert_messages(self, messages: List[Dict[str, str]]) -> List[BaseMessage]:
         """转换消息格式为 LangChain 格式"""
@@ -249,10 +274,11 @@ class LLMService:
         """流式调用并收集完整响应"""
         full_response = ""
         for chunk in client.stream(messages):
-            if chunk.content:
+            piece = _normalize_ai_content(getattr(chunk, "content", None))
+            if piece:
                 if callback:
-                    callback.on_llm_new_token(chunk.content)
-                full_response += chunk.content
+                    callback.on_llm_new_token(piece)
+                full_response += piece
         if callback:
             callback.flush()
         return strip_markdown(full_response) if strip_markdown_output else full_response
@@ -278,7 +304,7 @@ class LLMService:
 
         client = self._get_client()
         response = client.invoke(messages, **kwargs)
-        return response.content
+        return _normalize_ai_content(response.content)
 
     def stream_chat(
         self,
@@ -338,3 +364,9 @@ def get_llm_service() -> LLMService:
     if _llm_service is None:
         _llm_service = LLMService()
     return _llm_service
+
+
+def reset_llm_service() -> None:
+    """丢弃缓存的 LLM 客户端，使下次使用当前 get_config().llm。"""
+    global _llm_service
+    _llm_service = None

@@ -1,4 +1,4 @@
-"""填表报告、A 组日志、文档元数据写入。"""
+"""填表报告、执行日志、文档元数据写入。"""
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -14,7 +14,7 @@ def insert_fill_report(
     payload: Dict[str, Any],
     config: Optional[SystemConfig] = None,
 ) -> str:
-    """D 组填表报告入库。"""
+    """填表报告入库。"""
     if "schema_version" not in payload or "output_file" not in payload:
         raise ValueError("payload 须包含 schema_version 与 output_file")
     cfg = config or get_config()
@@ -64,7 +64,7 @@ def insert_agent_log(
     payload: Dict[str, Any],
     config: Optional[SystemConfig] = None,
 ) -> str:
-    """A 组执行日志。"""
+    """执行日志入库。"""
     if "action" not in payload or "summary" not in payload:
         raise ValueError("payload 须包含 action 与 summary")
     cfg = config or get_config()

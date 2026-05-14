@@ -14,7 +14,7 @@ export const useAuthStore = defineStore('auth', () => {
   })
 
   const userAvatar = computed(() => {
-    if (!currentUser.value) return '👤'
+    if (!currentUser.value) return '?'
     const name = userDisplayName.value
     return name.charAt(0).toUpperCase()
   })

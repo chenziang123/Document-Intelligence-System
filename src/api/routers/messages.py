@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from config import load_config
-from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage
+from config import load_config, set_config
+from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage, oss_storage_enabled
 from openpyxl import Workbook, load_workbook
 from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import (
@@ -91,7 +91,7 @@ def _resolve_file_reference(file_info: Dict[str, Any], cfg, session_id: str, kin
     if cache_path.exists():
         return str(cache_path)
 
-    if cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+    if oss_storage_enabled(cfg):
         try:
             return str(download_file_to_local(storage_key, cache_path, config=cfg))
         except Exception:
@@ -415,7 +415,7 @@ def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], paylo
                 storage_key = upload_file_to_storage(
                     dest_path,
                     config=cfg,
-                    blob_name=build_blob_name(session_id, dest_path.name, prefix=cfg.storage.azure_blob_prefix),
+                    blob_name=build_blob_name(session_id, dest_path.name, prefix=cfg.storage.object_key_prefix),
                 )
             except Exception:
                 storage_key = None
@@ -464,7 +464,7 @@ def _save_entity_extraction_files(session_id: str, cfg, user_id: Optional[str], 
             storage_key_json = upload_file_to_storage(
                 json_path,
                 config=cfg,
-                blob_name=build_blob_name(session_id, json_name, prefix=cfg.storage.azure_blob_prefix),
+                blob_name=build_blob_name(session_id, json_name, prefix=cfg.storage.object_key_prefix),
             )
         except Exception:
             storage_key_json = None
@@ -515,7 +515,7 @@ def _save_entity_extraction_files(session_id: str, cfg, user_id: Optional[str], 
                 storage_key_xlsx = upload_file_to_storage(
                     xlsx_path,
                     config=cfg,
-                    blob_name=build_blob_name(session_id, xlsx_name, prefix=cfg.storage.azure_blob_prefix),
+                    blob_name=build_blob_name(session_id, xlsx_name, prefix=cfg.storage.object_key_prefix),
                 )
             except Exception:
                 storage_key_xlsx = None
@@ -564,7 +564,7 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
                     storage_key = upload_file_to_storage(
                         dest_path,
                         config=cfg,
-                        blob_name=build_blob_name(session_id, json_name, prefix=cfg.storage.azure_blob_prefix),
+                        blob_name=build_blob_name(session_id, json_name, prefix=cfg.storage.object_key_prefix),
                     )
                 except Exception:
                     storage_key = None
@@ -612,7 +612,7 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
                     storage_key = upload_file_to_storage(
                         dest_path,
                         config=cfg,
-                        blob_name=build_blob_name(session_id, xlsx_name, prefix=cfg.storage.azure_blob_prefix),
+                        blob_name=build_blob_name(session_id, xlsx_name, prefix=cfg.storage.object_key_prefix),
                     )
                 except Exception:
                     storage_key = None
@@ -701,6 +701,7 @@ def _collect_new_generated_files(session_id: str, cfg, user_id: Optional[str], b
 async def get_messages_api(session_id: str, limit: int = 100, offset: int = 0, authorization: Optional[str] = Header(default=None)):
     """获取会话消息历史"""
     cfg = load_config()
+    set_config(cfg)
     current_user = _resolve_current_user(authorization, cfg)
     messages = get_messages(session_id, limit=limit, offset=offset, config=cfg, user_id=current_user.id if current_user else None)
     return [_message_to_dict(m) for m in messages]
@@ -713,6 +714,7 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
     用于简单场景或调试
     """
     cfg = load_config()
+    set_config(cfg)
     current_user = _resolve_current_user(authorization, cfg)
     print(f"[API] POST /api/messages/{session_id} mode={request.mode or 'auto'} content={request.content[:80]}")
     
@@ -730,14 +732,17 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
         user_meta["template_files"] = request.template_files
 
     # 保存用户消息（含附件元数据，供前端展示「文件 + 文字」为一条消息）
-    user_msg = add_message(
-        session_id,
-        "user",
-        request.content,
-        user_meta,
-        config=cfg,
-        user_id=current_user.id if current_user else None,
-    )
+    try:
+        user_msg = add_message(
+            session_id,
+            "user",
+            request.content,
+            user_meta,
+            config=cfg,
+            user_id=current_user.id if current_user else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if request.files is not None or request.template_files is not None:
         db_data_files = list(request.files or [])
@@ -797,18 +802,26 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
 
     # 调用 Agent 服务获取回复（必须与前端所选模式一致，否则恒走默认对话）
     agent_service = AgentService()
-    response = await agent_service.chat(
-        session_id,
-        request.content,
-        mode=effective_mode,
-        files=db_data_files,
-        template_files=db_template_files,
-    )
+    try:
+        response = await agent_service.chat(
+            session_id,
+            request.content,
+            mode=effective_mode,
+            files=db_data_files,
+            template_files=db_template_files,
+        )
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"模型或编排调用失败: {exc}") from exc
 
     assistant_content = response
     assistant_meta: Dict[str, Any] = {"mode": effective_mode}
     if effective_mode == "entity_extraction":
         assistant_content = _normalize_entity_extraction_response(response)
+    if not isinstance(assistant_content, str):
+        assistant_content = "" if assistant_content is None else str(assistant_content)
 
     generated_files = _collect_new_generated_files(
         session_id,
@@ -820,14 +833,17 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
         assistant_meta["generated_files"] = generated_files
     
     # 保存 AI 回复
-    ai_msg = add_message(
-        session_id,
-        "assistant",
-        assistant_content,
-        assistant_meta,
-        config=cfg,
-        user_id=current_user.id if current_user else None,
-    )
+    try:
+        ai_msg = add_message(
+            session_id,
+            "assistant",
+            assistant_content,
+            assistant_meta,
+            config=cfg,
+            user_id=current_user.id if current_user else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     
     return SendMessageResponse(
         message_id=ai_msg.id,
@@ -878,6 +894,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
     后端流式返回：{"type": "chunk", "content": "..."} 或 {"type": "done", "content": "..."}
     """
     cfg = load_config()
+    set_config(cfg)
     current_user = None
     authorization = websocket.headers.get("authorization") or websocket.query_params.get("token")
     if authorization:

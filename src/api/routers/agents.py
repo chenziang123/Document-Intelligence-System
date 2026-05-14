@@ -222,7 +222,7 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
                 storage_key = upload_file_to_storage(
                     path_obj,
                     config=cfg,
-                    blob_name=build_blob_name(request.session_id, path_obj.name, prefix=cfg.storage.azure_blob_prefix),
+                    blob_name=build_blob_name(request.session_id, path_obj.name, prefix=cfg.storage.object_key_prefix),
                 )
             except Exception:
                 storage_key = None

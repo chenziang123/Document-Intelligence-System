@@ -118,6 +118,21 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """未捕获异常：返回 JSON 便于前端 axios 展示 error.message；HTTPException 保持 detail 语义。"""
+    from fastapi import HTTPException
+
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        body: Any = {"detail": detail} if isinstance(detail, str) else {"detail": detail}
+        return JSONResponse(status_code=exc.status_code, content=body)
+    import traceback
+
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content=err_body("INTERNAL_ERROR", str(exc)))
+
+
 @app.get("/health")
 async def health():
     """服务与数据库连通性。"""
@@ -221,7 +236,7 @@ async def post_review(task_id: str, body: Dict[str, Any]):
 @app.post("/tasks/{task_id}/fill-report")
 async def post_fill_report(task_id: str, body: Dict[str, Any]):
     """
-    D 组：提交填表报告 JSON（须含 schema_version、output_file）。
+    提交填表报告 JSON（须含 schema_version、output_file）。
     """
     _reset_config()
     cfg = load_config()
@@ -242,7 +257,7 @@ async def post_fill_report(task_id: str, body: Dict[str, Any]):
 @app.post("/tasks/{task_id}/agent-logs")
 async def post_agent_log(task_id: str, body: Dict[str, Any]):
     """
-    A 组：提交执行日志 JSON（须含 action、summary）。
+    提交文档编辑/编排执行日志 JSON（须含 action、summary）。
     """
     _reset_config()
     cfg = load_config()

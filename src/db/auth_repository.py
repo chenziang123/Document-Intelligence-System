@@ -222,7 +222,11 @@ def resolve_user_from_authorization(
         if required:
             raise PermissionError("缺少 Authorization Bearer token")
         return None
-    payload = decode_access_token(token, cfg.auth.secret_key)
+    try:
+        payload = decode_access_token(token, cfg.auth.secret_key)
+    except ValueError as exc:
+        # 令牌格式错误、签名无效、过期等；各路由若只捕获 PermissionError 会漏掉而变成 500
+        raise PermissionError(str(exc)) from exc
     user = get_user_by_id(str(payload["sub"]), cfg)
     if not user:
         raise PermissionError("用户不存在或已被禁用")

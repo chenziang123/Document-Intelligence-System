@@ -1,4 +1,4 @@
-"""数据库迁移与校验脚本。
+"""执行 `sql/schema_v1.sql` 并校验 public 表结构（可选写读冒烟）。
 
 用法：
   python scripts/migrate_and_validate_db.py --check-only
@@ -20,10 +20,7 @@ from config import load_config
 from db.connection import build_conninfo, db_connection, health_check, is_database_configured
 
 MIGRATION_FILES = [
-    ROOT / "sql" / "001_create_sessions_tables.sql",
     ROOT / "sql" / "schema_v1.sql",
-    ROOT / "sql" / "002_auth_user_file_scope.sql",
-    ROOT / "sql" / "003_library_tables.sql",
 ]
 
 REQUIRED_TABLES = [
@@ -86,7 +83,7 @@ def _mask_conninfo(conninfo: str) -> str:
 
 def _read_sql(path: Path) -> str:
     if not path.exists():
-        raise FileNotFoundError(f"迁移文件不存在: {path}")
+        raise FileNotFoundError(f"SQL 文件不存在: {path}")
     return path.read_text(encoding="utf-8")
 
 
@@ -187,9 +184,9 @@ def run_seed_check() -> Tuple[bool, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="迁移并校验数据库结构")
-    parser.add_argument("--apply", action="store_true", help="执行 SQL 迁移")
-    parser.add_argument("--check-only", action="store_true", help="仅做结构校验，不执行迁移")
+    parser = argparse.ArgumentParser(description="应用基线 DDL 并校验数据库结构")
+    parser.add_argument("--apply", action="store_true", help="执行 sql/schema_v1.sql")
+    parser.add_argument("--check-only", action="store_true", help="仅校验结构，不执行 SQL")
     parser.add_argument("--with-seed-check", action="store_true", help="执行最小写读校验（事务内回滚）")
     args = parser.parse_args()
 
@@ -212,7 +209,7 @@ def main() -> int:
 
     if args.apply and not args.check_only:
         apply_migrations()
-        print("[INFO] 迁移执行完成")
+        print("[INFO] SQL 执行完成")
 
     schema_errors = validate_schema()
     if schema_errors:
@@ -229,7 +226,7 @@ def main() -> int:
             return 1
         print("[INFO]", seed_msg)
 
-    print("[DONE] 数据库迁移/校验流程完成")
+    print("[DONE] 流程完成")
     return 0
 
 

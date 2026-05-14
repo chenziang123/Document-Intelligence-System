@@ -640,8 +640,12 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
 
-    // 已有可用连接时直接复用，避免重复 close/open 造成频繁重连。
-    if (ws.value && (ws.value.readyState === WebSocket.OPEN || ws.value.readyState === WebSocket.CONNECTING)) {
+    // 仅当「目标会话」与当前 WS 一致且连接可用时才复用；换会话时必须走到下方关闭旧连接再建新连接。
+    if (
+      ws.value &&
+      wsSessionId.value === sessionId &&
+      (ws.value.readyState === WebSocket.OPEN || ws.value.readyState === WebSocket.CONNECTING)
+    ) {
       return
     }
 
@@ -1063,8 +1067,15 @@ export const useSessionStore = defineStore('session', () => {
       connectWebSocket(sessionId)
       canStream = await waitForWebSocketOpen(5000)
     }
-    
-    if (wsMatch && canStream && ws.value && ws.value.readyState === WebSocket.OPEN && wsSessionId.value === sessionId) {
+
+    // 重连后必须用当前状态判断（勿复用上面的 wsMatch，否则永远走 HTTP 回退）
+    const wsReady =
+      ws.value &&
+      ws.value.readyState === WebSocket.OPEN &&
+      wsSessionId.value === sessionId &&
+      canStream
+
+    if (wsReady) {
       console.log('[sendToBackend] 通过 WebSocket 发送, session_id:', sessionId)
       clearAllSelectedFiles()
       isSending = true

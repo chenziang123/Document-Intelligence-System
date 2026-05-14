@@ -1,8 +1,88 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import {
+  BookOpen,
+  Folder,
+  Table2,
+  FlaskConical,
+  FolderKanban,
+  ScrollText,
+  Newspaper,
+  Microscope,
+  Briefcase,
+  Building2,
+  FileSpreadsheet,
+  GraduationCap,
+  BookMarked,
+  Library,
+  Boxes,
+  AlertCircle,
+  TriangleAlert,
+} from 'lucide-vue-next'
 import { useLibraryStore } from '../../stores/libraryStore'
 
 const libraryStore = useLibraryStore()
+
+const SPACE_ICON_KEYS = [
+  'BookOpen',
+  'Folder',
+  'Table2',
+  'FlaskConical',
+  'FolderKanban',
+  'ScrollText',
+  'Newspaper',
+  'Microscope',
+  'Briefcase',
+  'Building2',
+  'FileSpreadsheet',
+  'GraduationCap',
+  'BookMarked',
+  'Library',
+  'Boxes',
+]
+
+const spaceIconByKey = {
+  BookOpen,
+  Folder,
+  Table2,
+  FlaskConical,
+  FolderKanban,
+  ScrollText,
+  Newspaper,
+  Microscope,
+  Briefcase,
+  Building2,
+  FileSpreadsheet,
+  GraduationCap,
+  BookMarked,
+  Library,
+  Boxes,
+}
+
+/** 兼容旧版单字图标存库 */
+const LEGACY_SPACE_ICONS = {
+  书: 'BookOpen',
+  档: 'Folder',
+  表: 'Table2',
+  研: 'FlaskConical',
+  项: 'FolderKanban',
+  卷: 'ScrollText',
+  刊: 'Newspaper',
+  验: 'Microscope',
+  案: 'Briefcase',
+  司: 'Building2',
+  报: 'FileSpreadsheet',
+  课: 'GraduationCap',
+  例: 'BookMarked',
+  库: 'Library',
+  组: 'Boxes',
+}
+
+function resolveSpaceIconKey(stored) {
+  if (stored && spaceIconByKey[stored]) return stored
+  if (stored && LEGACY_SPACE_ICONS[stored]) return LEGACY_SPACE_ICONS[stored]
+  return 'BookOpen'
+}
 
 // ==================== 组件挂载 ====================
 onMounted(() => {
@@ -16,11 +96,11 @@ function handleSpaceClick(spaceId) {
 
 // ==================== 新建空间 ====================
 const showCreateModal = ref(false)
-const createForm = ref({ name: '', icon: '📁', description: '' })
+const createForm = ref({ name: '', icon: 'BookOpen', description: '' })
 const isCreating = ref(false)
 const createError = ref('')
 
-const iconOptions = ['📚', '⚖️', '📊', '🌍', '🎯', '📁', '🗂️', '📑', '🔬', '💼', '🏢', '📰', '🎓', '🏥', '🏦']
+const iconOptions = SPACE_ICON_KEYS
 
 async function handleCreateSpace() {
   const { name } = createForm.value
@@ -33,7 +113,7 @@ async function handleCreateSpace() {
   try {
     await libraryStore.createSpace(name.trim(), createForm.value.icon, createForm.value.description)
     showCreateModal.value = false
-    createForm.value = { name: '', icon: '📁', description: '' }
+    createForm.value = { name: '', icon: 'BookOpen', description: '' }
   } catch (e) {
     createError.value = e.message || '创建失败，请重试'
   } finally {
@@ -42,7 +122,7 @@ async function handleCreateSpace() {
 }
 
 function openCreateModal() {
-  createForm.value = { name: '', icon: '📁', description: '' }
+  createForm.value = { name: '', icon: 'BookOpen', description: '' }
   createError.value = ''
   showCreateModal.value = true
 }
@@ -103,7 +183,6 @@ function closeDeleteModal() {
 
       <!-- 空状态 -->
       <div v-else-if="!libraryStore.isLoading && libraryStore.spaces.length === 0" class="spaces-empty">
-        <span class="empty-icon">📂</span>
         <p>暂无空间</p>
         <button class="empty-create-btn" @click="openCreateModal">+ 创建第一个空间</button>
       </div>
@@ -116,7 +195,9 @@ function closeDeleteModal() {
         :class="{ active: libraryStore.currentSpaceId === space.id }"
         @click="handleSpaceClick(space.id)"
       >
-        <span class="space-icon">{{ space.icon }}</span>
+        <span class="space-item-icon" aria-hidden="true">
+          <component :is="spaceIconByKey[resolveSpaceIconKey(space.icon)]" :size="16" :stroke-width="2" />
+        </span>
         <span class="space-name">{{ space.name }}</span>
         <span class="space-count">{{ space.doc_count }}</span>
         <button
@@ -141,7 +222,9 @@ function closeDeleteModal() {
           <div class="modal-body">
             <!-- 错误提示 -->
             <div v-if="createError" class="modal-error">
-              <span class="error-icon">⚠️</span>
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
               <span>{{ createError }}</span>
             </div>
 
@@ -163,13 +246,15 @@ function closeDeleteModal() {
               <label class="form-label">选择图标</label>
               <div class="icon-grid">
                 <button
-                  v-for="icon in iconOptions"
-                  :key="icon"
+                  v-for="key in iconOptions"
+                  :key="key"
+                  type="button"
                   class="icon-btn"
-                  :class="{ selected: createForm.icon === icon }"
-                  @click="createForm.icon = icon"
+                  :class="{ selected: createForm.icon === key }"
+                  :title="key"
+                  @click="createForm.icon = key"
                 >
-                  {{ icon }}
+                  <component :is="spaceIconByKey[key]" :size="20" :stroke-width="2" />
                 </button>
               </div>
             </div>
@@ -214,13 +299,17 @@ function closeDeleteModal() {
           <div class="modal-body">
             <!-- 错误提示 -->
             <div v-if="deleteError" class="modal-error">
-              <span class="error-icon">⚠️</span>
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
               <span>{{ deleteError }}</span>
             </div>
 
             <!-- 确认内容 -->
             <div class="confirm-box">
-              <div class="confirm-icon">⚠️</div>
+              <div class="confirm-icon" aria-hidden="true">
+                <TriangleAlert :size="28" :stroke-width="1.75" />
+              </div>
               <p class="confirm-text">
                 确定要删除空间 <strong>"{{ deleteTargetSpace?.name }}"</strong> 吗？
               </p>
@@ -286,7 +375,7 @@ function closeDeleteModal() {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--text-muted);
   font-size: 18px;
@@ -300,6 +389,18 @@ function closeDeleteModal() {
 }
 
 /* Space Item */
+.space-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.space-item.active .space-item-icon {
+  color: var(--accent-primary);
+}
+
 .space-item {
   display: flex;
   align-items: center;
@@ -319,17 +420,12 @@ function closeDeleteModal() {
 }
 
 .space-item.active {
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(37, 99, 235, 0.1);
   color: var(--accent-primary);
 }
 
 .space-item:hover .space-delete-btn {
   opacity: 1;
-}
-
-.space-icon {
-  font-size: 18px;
-  flex-shrink: 0;
 }
 
 .space-name {
@@ -346,7 +442,7 @@ function closeDeleteModal() {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -359,7 +455,7 @@ function closeDeleteModal() {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--text-muted);
   font-size: 16px;
@@ -389,7 +485,7 @@ function closeDeleteModal() {
   width: 6px;
   height: 6px;
   background: var(--accent-primary);
-  border-radius: 50%;
+  border-radius: 0;
   animation: bounce-dot 1.4s ease-in-out infinite;
 }
 
@@ -606,7 +702,7 @@ function closeDeleteModal() {
 
 .form-textarea:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 /* Icon Grid */
@@ -625,7 +721,7 @@ function closeDeleteModal() {
   background: var(--bg-tertiary);
   border: 2px solid var(--border-color);
   border-radius: var(--radius-md);
-  font-size: 20px;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -637,9 +733,10 @@ function closeDeleteModal() {
 }
 
 .icon-btn.selected {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(37, 99, 235, 0.12);
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+  color: var(--accent-primary);
 }
 
 /* Confirm Box */
@@ -655,11 +752,23 @@ function closeDeleteModal() {
   width: 56px;
   height: 56px;
   background: rgba(239, 68, 68, 0.1);
-  border-radius: 50%;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  color: var(--accent-danger);
+}
+
+.modal-error .error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 0;
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--accent-danger);
+  flex-shrink: 0;
 }
 
 .confirm-text {
@@ -744,7 +853,7 @@ function closeDeleteModal() {
   height: 16px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: white;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.7s linear infinite;
 }
 

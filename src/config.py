@@ -73,12 +73,14 @@ class FileConfig:
 
 @dataclass
 class StorageConfig:
-    """文件存储配置"""
+    """文件存储配置（本地 / 阿里云 OSS）"""
     enabled: bool = False
     provider: str = "local"
-    azure_connection_string: Optional[str] = None
-    azure_container_name: str = "document"
-    azure_blob_prefix: str = "sessions"
+    object_key_prefix: str = "sessions"
+    oss_endpoint: Optional[str] = None
+    oss_access_key_id: Optional[str] = None
+    oss_access_key_secret: Optional[str] = None
+    oss_bucket: Optional[str] = None
 
 
 @dataclass
@@ -189,20 +191,46 @@ def load_config() -> SystemConfig:
     """
     config = SystemConfig()
 
-    # LLM配置 (支持 DeepSeek)
-    if os.getenv("DEEPSEEK_API_KEY"):
-        config.llm.provider = "deepseek"
-        config.llm.api_key = os.getenv("DEEPSEEK_API_KEY")
-        config.llm.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-        config.llm.base_url = "https://api.deepseek.com"
-    elif os.getenv("OPENAI_API_KEY"):
-        config.llm.api_key = os.getenv("OPENAI_API_KEY")
+    # LLM：先读显式覆盖，再按 provider 填密钥，避免「同时写了 DEEPSEEK_API_KEY 与 LLM_PROVIDER=zhipu」导致混用密钥
+    explicit_llm_model = bool(os.getenv("LLM_MODEL"))
     if os.getenv("LLM_PROVIDER"):
-        config.llm.provider = os.getenv("LLM_PROVIDER")
+        config.llm.provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     if os.getenv("LLM_MODEL"):
-        config.llm.model = os.getenv("LLM_MODEL")
+        config.llm.model = os.getenv("LLM_MODEL", "").strip()
     if os.getenv("LLM_BASE_URL"):
-        config.llm.base_url = os.getenv("LLM_BASE_URL")
+        config.llm.base_url = os.getenv("LLM_BASE_URL", "").strip()
+
+    if not (config.llm.provider and str(config.llm.provider).strip()):
+        if os.getenv("DEEPSEEK_API_KEY"):
+            config.llm.provider = "deepseek"
+        elif os.getenv("ZHIPU_API_KEY"):
+            config.llm.provider = "zhipu"
+        elif os.getenv("OPENAI_API_KEY"):
+            config.llm.provider = "openai"
+
+    prov = (config.llm.provider or "deepseek").strip().lower()
+
+    if prov == "deepseek":
+        if os.getenv("DEEPSEEK_API_KEY"):
+            config.llm.api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not explicit_llm_model:
+            config.llm.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        if not config.llm.base_url:
+            config.llm.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    elif prov in ("zhipu", "glm"):
+        if os.getenv("ZHIPU_API_KEY"):
+            config.llm.api_key = os.getenv("ZHIPU_API_KEY")
+        if not explicit_llm_model and config.llm.model in ("deepseek-chat", LLMConfig().model):
+            config.llm.model = os.getenv("ZHIPU_MODEL", "glm-4-flash")
+        if not config.llm.base_url:
+            config.llm.base_url = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    elif prov in ("openai", "openai-compatible"):
+        if os.getenv("OPENAI_API_KEY"):
+            config.llm.api_key = os.getenv("OPENAI_API_KEY")
+        if not explicit_llm_model and config.llm.model == "deepseek-chat":
+            config.llm.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        if not config.llm.base_url:
+            config.llm.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
     # 数据库配置（支持 DATABASE_URL / SUPABASE_DB_URL 或分段变量）
     if os.getenv("DB_ENABLED"):
@@ -229,23 +257,32 @@ def load_config() -> SystemConfig:
     if os.getenv("DB_POOL_MAX"):
         config.database.pool_max_size = int(os.getenv("DB_POOL_MAX", "10"))
 
-    # 文件存储配置（支持 Azure Blob）
+    # 文件存储：仅阿里云 OSS（可选）
     if os.getenv("STORAGE_PROVIDER"):
         config.storage.provider = os.getenv("STORAGE_PROVIDER", "local").strip()
+    if config.storage.provider == "oss":
+        config.storage.provider = "aliyun_oss"
     if os.getenv("STORAGE_ENABLED"):
         config.storage.enabled = os.getenv("STORAGE_ENABLED").lower() == "true"
-    if os.getenv("AZURE_STORAGE_CONNECTION_STRING"):
-        config.storage.azure_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
-    if os.getenv("AZURE_STORAGE_CONTAINER_NAME"):
-        config.storage.azure_container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "document").strip()
-    if os.getenv("AZURE_STORAGE_BLOB_PREFIX"):
-        config.storage.azure_blob_prefix = os.getenv("AZURE_STORAGE_BLOB_PREFIX", "sessions").strip()
-    if config.storage.azure_connection_string and config.storage.provider in ("azure", "azure_blob", "blob"):
+    if os.getenv("OSS_PREFIX"):
+        config.storage.object_key_prefix = os.getenv("OSS_PREFIX", "sessions").strip()
+    if os.getenv("OSS_ENDPOINT"):
+        config.storage.oss_endpoint = os.getenv("OSS_ENDPOINT", "").strip()
+    if os.getenv("OSS_ACCESS_KEY_ID"):
+        config.storage.oss_access_key_id = os.getenv("OSS_ACCESS_KEY_ID", "").strip()
+    if os.getenv("OSS_ACCESS_KEY_SECRET"):
+        config.storage.oss_access_key_secret = os.getenv("OSS_ACCESS_KEY_SECRET", "").strip()
+    if os.getenv("OSS_BUCKET"):
+        config.storage.oss_bucket = os.getenv("OSS_BUCKET", "").strip()
+    oss_ready = bool(
+        config.storage.oss_endpoint
+        and config.storage.oss_access_key_id
+        and config.storage.oss_access_key_secret
+        and config.storage.oss_bucket
+    )
+    if config.storage.provider in ("aliyun_oss", "oss") and oss_ready:
         config.storage.enabled = True
-        config.storage.provider = "azure_blob"
-    if config.storage.azure_connection_string and config.storage.provider == "local":
-        config.storage.enabled = True
-        config.storage.provider = "azure_blob"
+        config.storage.provider = "aliyun_oss"
 
     if os.getenv("AUTH_SECRET_KEY"):
         config.auth.secret_key = os.getenv("AUTH_SECRET_KEY", "change-me-in-production")
@@ -289,3 +326,10 @@ def set_config(config: SystemConfig):
     """设置全局配置"""
     global _config
     _config = config
+    # 丢弃 LLM 单例，避免仍持有旧 base_url/model 的 ChatOpenAI 客户端
+    try:
+        from core.llm.llm_service import reset_llm_service
+
+        reset_llm_service()
+    except Exception:
+        pass

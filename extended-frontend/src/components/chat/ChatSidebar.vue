@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { Pencil, Trash2, Plus, ChevronLeft } from 'lucide-vue-next'
 import { useSessionStore } from '../../stores/sessionStore'
 
 const props = defineProps({
@@ -95,13 +96,13 @@ async function saveRename(session) {
   <aside class="chat-sidebar" :class="{ collapsed: props.collapsed }">
     <!-- 收起按钮 - 在侧边栏内部 -->
     <button v-if="!props.collapsed" class="sidebar-toggle" @click="sessionStore.toggleSidebar" title="收起侧边栏">
-      ←
+      <ChevronLeft :size="18" :stroke-width="2" aria-hidden="true" />
     </button>
 
     <!-- Header -->
     <div class="chat-sidebar-header">
       <button class="new-session-btn" @click="sessionStore.createSession">
-        <span>+</span>
+        <Plus :size="18" :stroke-width="2" aria-hidden="true" />
         <span>新建会话</span>
       </button>
     </div>
@@ -136,7 +137,6 @@ async function saveRename(session) {
             :class="{ active: sessionStore.currentSessionId === session.session_id }"
             @click="sessionStore.selectSession(session.session_id)"
           >
-            <span class="session-icon">💬</span>
             <div class="session-info">
               <!-- 编辑模式 -->
               <div v-if="editingSessionId === session.session_id" class="session-edit" @click.stop>
@@ -161,17 +161,19 @@ async function saveRename(session) {
             <div class="session-actions" @click.stop>
               <button
                 class="session-action-btn"
+                type="button"
                 title="重命名"
                 @click="startRename(session)"
               >
-                ✏️
+                <Pencil :size="14" :stroke-width="2" aria-hidden="true" />
               </button>
               <button
                 class="session-action-btn delete"
+                type="button"
                 title="删除会话"
                 @click="sessionStore.deleteSession(session.session_id)"
               >
-                🗑️
+                <Trash2 :size="14" :stroke-width="2" aria-hidden="true" />
               </button>
             </div>
           </div>

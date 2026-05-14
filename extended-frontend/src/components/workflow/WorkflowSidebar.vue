@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { Plus, Languages, GitBranch } from 'lucide-vue-next'
 import { useWorkflowStore } from '../../stores/workflowStore'
 
 const workflowStore = useWorkflowStore()
@@ -98,14 +99,14 @@ function onToolboxDragStart(e, item) {
           :class="{ active: activeSection === 'workflow' }"
           @click="activeSection = 'workflow'"
         >
-          <span>📋</span> 工作流
+          工作流
         </button>
         <button
           class="switcher-btn"
           :class="{ active: activeSection === 'toolbox' }"
           @click="activeSection = 'toolbox'"
         >
-          <span>🧩</span> 组件库
+          组件库
         </button>
       </div>
 
@@ -114,7 +115,7 @@ function onToolboxDragStart(e, item) {
         <!-- New Workflow -->
         <div class="sidebar-section">
           <button class="new-workflow-btn" @click="handleNewWorkflow">
-            <span>+</span>
+            <Plus :size="18" :stroke-width="2" aria-hidden="true" />
             <span>新建工作流</span>
           </button>
         </div>
@@ -122,7 +123,9 @@ function onToolboxDragStart(e, item) {
         <!-- Quick Template: Translation Flow -->
         <div class="sidebar-section">
           <div class="template-quick-card" @click="handleLoadTranslationTemplate">
-            <div class="template-quick-icon">🌍</div>
+            <div class="template-quick-icon" aria-hidden="true">
+              <Languages :size="22" :stroke-width="1.75" />
+            </div>
             <div class="template-quick-info">
               <div class="template-quick-name">文档翻译流</div>
               <div class="template-quick-desc">PDF → AI翻译 → 输出</div>
@@ -153,7 +156,7 @@ function onToolboxDragStart(e, item) {
               :class="{ active: workflowStore.currentWorkflowId === wf.id }"
               @click="handleWorkflowClick(wf.id)"
             >
-              <span class="workflow-icon">{{ wf.icon }}</span>
+              <span class="workflow-marker" :class="wf.type === 'template' ? 'is-template' : 'is-custom'" aria-hidden="true" />
               <div class="workflow-info">
                 <span class="workflow-name">{{ wf.name }}</span>
                 <span class="workflow-time">{{ wf.time }}</span>
@@ -171,7 +174,7 @@ function onToolboxDragStart(e, item) {
               :class="{ active: workflowStore.currentWorkflowId === wf.id }"
               @click="handleWorkflowClick(wf.id)"
             >
-              <span class="workflow-icon">{{ wf.icon }}</span>
+              <span class="workflow-marker" :class="wf.type === 'template' ? 'is-template' : 'is-custom'" aria-hidden="true" />
               <div class="workflow-info">
                 <span class="workflow-name">{{ wf.name }}</span>
                 <span class="workflow-time">{{ wf.time }}</span>
@@ -181,7 +184,9 @@ function onToolboxDragStart(e, item) {
 
           <!-- Empty State -->
           <div v-if="workflowStore.customWorkflows.length === 0 && workflowStore.templateWorkflows.length === 0" class="workflow-empty">
-            <div class="workflow-empty-icon">📋</div>
+            <div class="workflow-empty-icon" aria-hidden="true">
+              <GitBranch :size="26" :stroke-width="1.75" />
+            </div>
             <div class="workflow-empty-text">暂无工作流</div>
             <button class="workflow-empty-btn" @click="handleNewWorkflow">创建第一个工作流</button>
           </div>
@@ -218,7 +223,7 @@ function onToolboxDragStart(e, item) {
                 title="按住拖到画布"
                 @dragstart="onToolboxDragStart($event, item)"
               >
-                <div class="toolbox-item-icon">{{ item.icon }}</div>
+                <div class="toolbox-item-icon" :class="item.type" aria-hidden="true" />
                 <span class="toolbox-item-name">{{ item.name }}</span>
               </div>
               <button
@@ -227,7 +232,9 @@ function onToolboxDragStart(e, item) {
                 draggable="false"
                 title="添加到画布末尾"
                 @click.stop="handleAddNode(item)"
-              >+</button>
+              >
+                <Plus :size="16" :stroke-width="2" aria-hidden="true" />
+              </button>
             </div>
           </div>
         </div>
@@ -252,8 +259,8 @@ function onToolboxDragStart(e, item) {
 .loading-dots span {
   width: 8px;
   height: 8px;
-  background: var(--accent-purple);
-  border-radius: 50%;
+  background: var(--accent-primary);
+  border-radius: 0;
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
@@ -270,8 +277,8 @@ function onToolboxDragStart(e, item) {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.1));
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(59, 130, 246, 0.06));
+  border: 1px solid rgba(37, 99, 235, 0.22);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s;
@@ -286,15 +293,15 @@ function onToolboxDragStart(e, item) {
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.05));
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(59, 130, 246, 0.04));
   opacity: 0;
   transition: opacity 0.2s;
 }
 
 .template-quick-card:hover {
-  border-color: rgba(99, 102, 241, 0.5);
+  border-color: rgba(37, 99, 235, 0.4);
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.15);
 }
 
 .template-quick-card:hover::before {
@@ -304,13 +311,13 @@ function onToolboxDragStart(e, item) {
 .template-quick-icon {
   width: 40px;
   height: 40px;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-purple));
+  background: var(--gradient-primary);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
   flex-shrink: 0;
+  color: var(--text-inverse);
 }
 
 .template-quick-info {
@@ -334,9 +341,9 @@ function onToolboxDragStart(e, item) {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-primary);
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(37, 99, 235, 0.12);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -349,8 +356,15 @@ function onToolboxDragStart(e, item) {
 }
 
 .workflow-empty-icon {
-  font-size: 40px;
-  opacity: 0.3;
+  width: 48px;
+  height: 48px;
+  border-radius: 0;
+  background: rgba(37, 99, 235, 0.06);
+  border: 2px dashed rgba(37, 99, 235, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
 }
 
 .workflow-empty-text {
@@ -361,8 +375,8 @@ function onToolboxDragStart(e, item) {
 .workflow-empty-btn {
   margin-top: 8px;
   padding: 8px 16px;
-  background: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(37, 99, 235, 0.1);
+  border: 1px solid rgba(37, 99, 235, 0.25);
   border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 500;
@@ -372,7 +386,7 @@ function onToolboxDragStart(e, item) {
 }
 
 .workflow-empty-btn:hover {
-  background: rgba(99, 102, 241, 0.25);
+  background: rgba(37, 99, 235, 0.16);
   border-color: var(--accent-primary);
 }
 

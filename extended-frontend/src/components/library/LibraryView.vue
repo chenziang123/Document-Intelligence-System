@@ -1,6 +1,7 @@
 <script setup>
 import LibrarySidebar from './LibrarySidebar.vue'
 import DocGrid from './DocGrid.vue'
+import { Search } from 'lucide-vue-next'
 import { useLibraryStore } from '../../stores/libraryStore'
 
 const libraryStore = useLibraryStore()
@@ -19,13 +20,14 @@ function clearSearch() {
     <!-- Toolbar -->
     <div class="library-toolbar">
       <div class="library-title">
-        <span>📚</span>
         <span>文档库管理</span>
       </div>
       <div class="library-actions">
         <!-- 搜索框 -->
         <div class="search-box">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon-svg" aria-hidden="true">
+            <Search :size="16" :stroke-width="2" />
+          </span>
           <input
             :value="libraryStore.searchQuery"
             class="search-input"
@@ -93,10 +95,12 @@ function clearSearch() {
   align-items: center;
 }
 
-.search-icon {
+.search-icon-svg {
   position: absolute;
   left: 12px;
-  font-size: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
   color: var(--text-muted);
   pointer-events: none;
 }
@@ -121,7 +125,7 @@ function clearSearch() {
 .search-input:focus {
   border-color: var(--accent-primary);
   width: 280px;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .search-clear {
@@ -137,7 +141,7 @@ function clearSearch() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 0;
   transition: all 0.2s;
 }
 

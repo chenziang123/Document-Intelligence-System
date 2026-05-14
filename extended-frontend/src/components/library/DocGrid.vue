@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { AlertCircle, TriangleAlert } from 'lucide-vue-next'
 import { useLibraryStore } from '../../stores/libraryStore'
 import libraryApi from '../../api/library'
 
@@ -193,7 +194,6 @@ function getFileIcon(extension) {
     <!-- Content Header -->
     <div class="content-header">
       <div class="current-space">
-        <span>{{ libraryStore.currentSpace?.icon || '📁' }}</span>
         <span>{{ libraryStore.currentSpace?.name || '请选择空间' }}</span>
         <span v-if="libraryStore.isUploading" class="upload-indicator">
           上传中... {{ libraryStore.uploadProgress }}%
@@ -207,7 +207,6 @@ function getFileIcon(extension) {
         </div>
         <div v-else-if="libraryStore.currentSpaceId" class="header-actions">
           <button class="lib-btn" @click="triggerUpload">
-            <span>📤</span>
             <span>导入文档</span>
           </button>
         </div>
@@ -217,7 +216,7 @@ function getFileIcon(extension) {
     <!-- Drag Overlay -->
     <div v-if="isDragOver" class="drag-overlay">
       <div class="drag-inner">
-        <span class="drag-icon">📥</span>
+        <span class="drag-cue" aria-hidden="true" />
         <span class="drag-text">松开以上传文件</span>
       </div>
     </div>
@@ -230,14 +229,12 @@ function getFileIcon(extension) {
 
     <!-- Empty State -->
     <div v-else-if="!libraryStore.currentSpaceId" class="docs-empty">
-      <span class="empty-icon">📂</span>
       <h3>请先选择一个文档空间</h3>
       <p>在左侧选择一个空间，或创建一个新空间</p>
     </div>
 
     <!-- Empty Docs -->
     <div v-else-if="libraryStore.filteredDocs.length === 0" class="docs-empty">
-      <span class="empty-icon">📄</span>
       <h3>该空间暂无文档</h3>
       <p>点击上方「导入文档」按钮上传文件</p>
       <p class="drop-hint">或直接将文件拖拽到此处</p>
@@ -254,7 +251,7 @@ function getFileIcon(extension) {
       >
         <!-- Checkbox -->
         <div class="doc-checkbox">
-          <span v-if="libraryStore.isDocSelected(doc.id)">✓</span>
+          <span v-if="libraryStore.isDocSelected(doc.id)" class="doc-check-visual" aria-hidden="true" />
         </div>
 
         <!-- Delete Button -->
@@ -309,11 +306,15 @@ function getFileIcon(extension) {
           </div>
           <div class="modal-body">
             <div v-if="deleteError" class="modal-error">
-              <span class="error-icon">⚠️</span>
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
               <span>{{ deleteError }}</span>
             </div>
             <div class="confirm-box">
-              <div class="confirm-icon">⚠️</div>
+              <div class="confirm-icon" aria-hidden="true">
+                <TriangleAlert :size="28" :stroke-width="1.75" />
+              </div>
               <p class="confirm-text">确定要删除文档 <strong>"{{ deleteTargetDoc?.name }}"</strong> 吗？</p>
               <p class="confirm-subtext">删除后将无法恢复。</p>
             </div>
@@ -339,11 +340,15 @@ function getFileIcon(extension) {
           </div>
           <div class="modal-body">
             <div v-if="batchDeleteError" class="modal-error">
-              <span class="error-icon">⚠️</span>
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
               <span>{{ batchDeleteError }}</span>
             </div>
             <div class="confirm-box">
-              <div class="confirm-icon batch-icon">⚠️</div>
+              <div class="confirm-icon batch-icon" aria-hidden="true">
+                <TriangleAlert :size="28" :stroke-width="1.75" />
+              </div>
               <p class="confirm-text">确定要删除选中的 <strong>{{ libraryStore.selectedCount }}</strong> 个文档吗？</p>
               <p class="confirm-subtext">删除后将无法恢复。</p>
             </div>
@@ -394,9 +399,9 @@ function getFileIcon(extension) {
   font-size: 12px;
   font-weight: 500;
   color: var(--accent-primary);
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(37, 99, 235, 0.1);
   padding: 4px 12px;
-  border-radius: 12px;
+  border-radius: 0;
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -481,8 +486,12 @@ function getFileIcon(extension) {
   gap: 12px;
 }
 
-.drag-icon {
-  font-size: 64px;
+.drag-cue {
+  width: 52px;
+  height: 52px;
+  border-radius: 0;
+  border: 3px dashed rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.06);
   animation: bounce-up 0.6s ease-in-out infinite alternate;
 }
 
@@ -513,7 +522,7 @@ function getFileIcon(extension) {
   height: 36px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-primary);
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.8s linear infinite;
 }
 
@@ -585,7 +594,7 @@ function getFileIcon(extension) {
 
 .doc-card.selected {
   border-color: var(--accent-primary);
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(37, 99, 235, 0.06);
 }
 
 /* Checkbox */
@@ -597,7 +606,7 @@ function getFileIcon(extension) {
   height: 22px;
   background: var(--bg-tertiary);
   border: 2px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -615,7 +624,16 @@ function getFileIcon(extension) {
 .doc-card.selected .doc-checkbox {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: white;
+}
+
+.doc-check-visual {
+  display: block;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  margin-bottom: 2px;
 }
 
 /* Delete Button */
@@ -630,7 +648,7 @@ function getFileIcon(extension) {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--text-muted);
   font-size: 18px;
@@ -661,7 +679,7 @@ function getFileIcon(extension) {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--text-muted);
   font-size: 16px;
@@ -689,7 +707,7 @@ function getFileIcon(extension) {
   height: 14px;
   border: 2px solid rgba(59, 130, 246, 0.3);
   border-top-color: #3b82f6;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.7s linear infinite;
 }
 
@@ -747,14 +765,14 @@ function getFileIcon(extension) {
   width: 100%;
   height: 6px;
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: 0;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   background: var(--gradient-primary);
-  border-radius: 3px;
+  border-radius: 0;
   transition: width 0.3s ease;
 }
 
@@ -876,11 +894,23 @@ function getFileIcon(extension) {
   width: 56px;
   height: 56px;
   background: rgba(239, 68, 68, 0.1);
-  border-radius: 50%;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  color: var(--accent-danger);
+}
+
+.modal-error .error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 0;
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--accent-danger);
+  flex-shrink: 0;
 }
 
 .batch-icon {
@@ -955,7 +985,7 @@ function getFileIcon(extension) {
   height: 16px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: white;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.7s linear infinite;
 }
 

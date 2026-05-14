@@ -71,7 +71,7 @@ workspace/uploads/
 temp/storage_cache/
 src/output/*.json
 src/output/*.xlsx
-src/temp/azure_blob_cache/
+src/temp/oss_cache/
 src/temp/file_cache/
 
 

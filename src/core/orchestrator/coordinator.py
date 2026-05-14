@@ -448,7 +448,7 @@ class WorkflowCoordinator:
                     storage_key = upload_file_to_storage(
                         path,
                         config=self.config,
-                        blob_name=build_blob_name(task_spec.session_id, path.name, prefix=self.config.storage.azure_blob_prefix),
+                        blob_name=build_blob_name(task_spec.session_id, path.name, prefix=self.config.storage.object_key_prefix),
                     )
                 except Exception:
                     storage_key = None

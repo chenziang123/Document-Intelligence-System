@@ -13,7 +13,13 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from config import load_config
-from core.storage import build_blob_name, delete_file_from_storage, download_file_to_local, upload_stream_to_storage
+from core.storage import (
+    build_blob_name,
+    delete_file_from_storage,
+    download_file_to_local,
+    upload_stream_to_storage,
+    oss_storage_enabled,
+)
 from db.auth_repository import resolve_user_from_authorization
 from db.session_repository import (
     add_session_file,
@@ -91,7 +97,7 @@ def _file_to_dict(f) -> Dict[str, Any]:
 
 
 def _cleanup_blob_cache_file(path: Path, cache_root: Path) -> None:
-    """仅清理 azure_blob_cache 下的临时下载文件。"""
+    """仅清理 oss_cache 下的临时下载文件。"""
     try:
         path = path.resolve()
         cache_root = cache_root.resolve()
@@ -164,15 +170,15 @@ async def upload_file(
     safe_name = f"{timestamp}_{file_name}"
     file_size = 0
     storage_key = None
-    if cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+    if oss_storage_enabled(cfg):
         storage_key = upload_stream_to_storage(
             file.file,
             config=cfg,
-            blob_name=build_blob_name(session_id, safe_name, prefix=cfg.storage.azure_blob_prefix),
+            blob_name=build_blob_name(session_id, safe_name, prefix=cfg.storage.object_key_prefix),
             content_type=file.content_type,
         )
         if not storage_key:
-            raise HTTPException(status_code=502, detail="Azure Blob 上传失败")
+            raise HTTPException(status_code=502, detail="OSS 上传失败")
         try:
             file.file.seek(0, 2)
             file_size = file.file.tell()
@@ -261,7 +267,7 @@ async def delete_file(session_id: str, file_id: int, authorization: Optional[str
     if not file_info:
         raise HTTPException(status_code=404, detail="文件不存在")
     
-    # 删除 Blob 文件
+    # 删除 OSS 对象
     storage_key = getattr(file_info, "storage_key", None)
     if storage_key:
         delete_file_from_storage(storage_key, config=cfg)
@@ -287,8 +293,8 @@ async def download_file(session_id: str, file_id: int, authorization: Optional[s
     storage_key = getattr(file_info, "storage_key", None) or ""
     file_path = None
 
-    if storage_key and cfg.storage.enabled and cfg.storage.provider == "azure_blob":
-        cache_path = Path(cfg.temp_dir) / "azure_blob_cache" / storage_key
+    if storage_key and oss_storage_enabled(cfg):
+        cache_path = Path(cfg.temp_dir) / "oss_cache" / storage_key
         try:
             file_path = download_file_to_local(storage_key, cache_path, config=cfg)
         except Exception:
@@ -318,17 +324,17 @@ download_router = APIRouter(prefix="/api/files", tags=["文件下载"])
 
 @download_router.get("/download-by-blob")
 async def download_by_blob(blob_name: str, authorization: Optional[str] = Header(default=None)):
-    """从 Azure Blob Storage 下载文件。"""
+    """从阿里云 OSS 按对象键下载文件。"""
     cfg = load_config()
     current_user = _resolve_current_user(authorization, cfg)
-    if not cfg.storage.enabled or cfg.storage.provider != "azure_blob":
-        raise HTTPException(status_code=503, detail="Blob 存储未启用")
+    if not oss_storage_enabled(cfg):
+        raise HTTPException(status_code=503, detail="OSS 未启用")
 
     # 允许 workflows / sessions 前缀的 blob
-    allowed_prefixes = (cfg.storage.azure_blob_prefix or "sessions").split(",")
+    allowed_prefixes = (cfg.storage.object_key_prefix or "sessions").split(",")
     safe_prefixes = tuple(p.strip() for p in allowed_prefixes) + ("sessions", "workflows")
     if not any(blob_name.startswith(sp) for sp in safe_prefixes):
-        raise HTTPException(status_code=403, detail="不允许访问该 Blob")
+        raise HTTPException(status_code=403, detail="不允许访问该对象键")
 
     try:
         from core.storage import download_file_to_local
@@ -343,12 +349,12 @@ async def download_by_blob(blob_name: str, authorization: Optional[str] = Header
             media_type="application/octet-stream",
         )
     except Exception:
-        raise HTTPException(status_code=404, detail="Blob 文件不存在")
+        raise HTTPException(status_code=404, detail="OSS 对象不存在")
 
 
 @download_router.get("/download")
 async def download_by_path(path: str, authorization: Optional[str] = Header(default=None)):
-    """根据本地绝对路径或 Blob key 下载（本地测试用）"""
+    """根据本地绝对路径或 OSS 对象键下载（本地测试用）"""
     cfg = load_config()
     current_user = _resolve_current_user(authorization, cfg)
 
@@ -358,9 +364,9 @@ async def download_by_path(path: str, authorization: Optional[str] = Header(defa
     if not any(file_path.is_relative_to(root) for root in allowed_roots):
         raise HTTPException(status_code=403, detail="不允许访问该路径")
 
-    if not file_path.exists() and cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+    if not file_path.exists() and oss_storage_enabled(cfg):
         try:
-            cache_path = Path(cfg.temp_dir) / "azure_blob_cache" / path
+            cache_path = Path(cfg.temp_dir) / "oss_cache" / path
             file_path = download_file_to_local(path, cache_path, config=cfg)
         except Exception:
             raise HTTPException(status_code=404, detail="文件不存在")
@@ -399,15 +405,15 @@ async def upload_temp_file(
     safe_name = f"{timestamp}_{file_name}"
     file_size = 0
 
-    if cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+    if oss_storage_enabled(cfg):
         storage_key = upload_stream_to_storage(
             file.file,
             config=cfg,
-            blob_name=build_blob_name(session_id, safe_name, prefix=cfg.storage.azure_blob_prefix),
+            blob_name=build_blob_name(session_id, safe_name, prefix=cfg.storage.object_key_prefix),
             content_type=file.content_type,
         )
         if not storage_key:
-            raise HTTPException(status_code=502, detail="Azure Blob 上传失败")
+            raise HTTPException(status_code=502, detail="OSS 上传失败")
         try:
             file.file.seek(0, 2)
             file_size = file.file.tell()

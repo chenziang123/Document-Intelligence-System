@@ -17,6 +17,7 @@ from core.storage import (
     delete_file_from_storage,
     download_file_to_local,
     upload_stream_to_storage,
+    oss_storage_enabled,
 )
 from db.auth_repository import resolve_user_from_authorization
 from db.library_repository import (
@@ -226,7 +227,7 @@ async def delete_space(
     if not space:
         raise HTTPException(status_code=404, detail="空间不存在")
 
-    # 删除空间下所有文档的 Blob 文件
+    # 删除空间下所有文档的 OSS 对象
     docs = get_library_docs(space_id, config=cfg, user_id=user.id if user else None)
     for doc in docs:
         if doc.storage_key:
@@ -282,11 +283,11 @@ async def upload_doc(
     file_hash = _compute_file_hash(content)
 
     storage_key = None
-    if cfg.storage.enabled and cfg.storage.provider == "azure_blob":
+    if oss_storage_enabled(cfg):
         blob_name = build_blob_name(
             space_id,
             f"{file_hash}_{file_name}",
-            prefix=cfg.storage.azure_blob_prefix,
+            prefix=cfg.storage.object_key_prefix,
         )
         storage_key = upload_stream_to_storage(
             BytesIO(content),
@@ -295,7 +296,7 @@ async def upload_doc(
             content_type=file.content_type,
         )
         if not storage_key:
-            raise HTTPException(status_code=502, detail="Azure Blob 上传失败")
+            raise HTTPException(status_code=502, detail="OSS 上传失败")
     else:
         # 本地存储
         safe_name = f"{file_hash}_{file_name}"
@@ -331,7 +332,7 @@ async def delete_doc(
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    # 删除 Blob 文件
+    # 删除 OSS 对象
     if doc.storage_key:
         delete_file_from_storage(doc.storage_key, config=cfg)
 
@@ -384,8 +385,8 @@ async def download_doc(
     file_path = None
 
     # 优先用 storage_key 从云存储下载
-    if storage_key and cfg.storage.enabled and cfg.storage.provider == "azure_blob":
-        cache_path = Path(cfg.temp_dir) / "azure_blob_cache" / storage_key
+    if storage_key and oss_storage_enabled(cfg):
+        cache_path = Path(cfg.temp_dir) / "oss_cache" / storage_key
         try:
             file_path = download_file_to_local(storage_key, cache_path, config=cfg)
         except Exception as exc:

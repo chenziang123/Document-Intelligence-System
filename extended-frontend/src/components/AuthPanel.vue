@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { Sparkles, AlertCircle } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/authStore'
 
 const authStore = useAuthStore()
@@ -67,7 +68,9 @@ async function handleRegister() {
       <!-- Logo区域 -->
       <div class="auth-header">
         <div class="auth-logo">
-          <div class="auth-logo-icon">📄</div>
+          <div class="auth-logo-icon" aria-hidden="true">
+            <Sparkles :size="28" :stroke-width="1.75" />
+          </div>
           <div class="auth-logo-glow"></div>
         </div>
         <h1 class="auth-title">文档智能系统</h1>
@@ -76,7 +79,9 @@ async function handleRegister() {
 
       <!-- 错误提示 -->
       <div v-if="errorText" class="auth-error">
-        <span class="auth-error-icon">⚠️</span>
+        <span class="auth-error-icon" aria-hidden="true">
+          <AlertCircle :size="18" :stroke-width="2" />
+        </span>
         <span>{{ errorText }}</span>
       </div>
 
@@ -106,7 +111,6 @@ async function handleRegister() {
       <form v-if="activeTab === 'login'" class="auth-form" @submit.prevent="handleLogin">
         <div class="auth-field">
           <label class="auth-label">
-            <span class="auth-label-icon">📱</span>
             手机号
           </label>
           <input
@@ -120,7 +124,6 @@ async function handleRegister() {
 
         <div class="auth-field">
           <label class="auth-label">
-            <span class="auth-label-icon">🔒</span>
             密码
           </label>
           <input
@@ -147,7 +150,6 @@ async function handleRegister() {
       <form v-else class="auth-form" @submit.prevent="handleRegister">
         <div class="auth-field">
           <label class="auth-label">
-            <span class="auth-label-icon">📱</span>
             手机号
           </label>
           <input
@@ -161,7 +163,6 @@ async function handleRegister() {
 
         <div class="auth-field">
           <label class="auth-label">
-            <span class="auth-label-icon">👤</span>
             昵称
           </label>
           <input
@@ -175,7 +176,6 @@ async function handleRegister() {
 
         <div class="auth-field">
           <label class="auth-label">
-            <span class="auth-label-icon">🔒</span>
             密码
           </label>
           <input

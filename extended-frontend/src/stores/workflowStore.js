@@ -42,7 +42,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   const nodeSchemas = ref({
     'schema-pdf-input': {
-      icon: '📕', iconClass: 'input',
+      icon: '', iconClass: 'input',
       title: 'PDF 输入', subtitle: '输入节点',
       fields: [
         { key: 'inputSource', label: '文档来源', type: 'select-source',
@@ -52,7 +52,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-md-input': {
-      icon: '📝', iconClass: 'input',
+      icon: '', iconClass: 'input',
       title: 'MD 输入', subtitle: '输入节点',
       fields: [
         { key: 'inputSource', label: '文档来源', type: 'select-source',
@@ -61,7 +61,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-txt-input': {
-      icon: '📄', iconClass: 'input',
+      icon: '', iconClass: 'input',
       title: 'TXT 输入', subtitle: '输入节点',
       fields: [
         { key: 'inputSource', label: '文档来源', type: 'select-source',
@@ -70,7 +70,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-docx-input': {
-      icon: '📘', iconClass: 'input',
+      icon: '', iconClass: 'input',
       title: 'DOCX 输入', subtitle: '输入节点',
       fields: [
         { key: 'inputSource', label: '文档来源', type: 'select-source',
@@ -79,7 +79,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-xlsx-input': {
-      icon: '📊', iconClass: 'input',
+      icon: '', iconClass: 'input',
       title: 'XLSX 输入', subtitle: '输入节点',
       fields: [
         { key: 'inputSource', label: '文档来源', type: 'select-source',
@@ -90,7 +90,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-translate': {
-      icon: '🌍', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: 'AI 翻译', subtitle: '翻译节点',
       fields: [
         { key: 'targetLanguage', label: '目标语言', type: 'language-selector' },
@@ -98,7 +98,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-extract-summary': {
-      icon: '📋', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '内容提取', subtitle: '提取节点',
       fields: [
         { key: 'extractType', label: '提取类型', type: 'select',
@@ -109,7 +109,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-extract-data': {
-      icon: '📊', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '数据抽取', subtitle: '抽取节点',
       fields: [
         { key: 'dataFormat', label: '输出格式', type: 'select',
@@ -119,7 +119,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-analyze-content': {
-      icon: '🔍', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '内容分析', subtitle: '分析节点',
       fields: [
         { key: 'analysisType', label: '分析类型', type: 'select',
@@ -131,7 +131,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-enhance-text': {
-      icon: '✨', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '文本增强', subtitle: '增强节点',
       fields: [
         { key: 'enhanceType', label: '增强类型', type: 'select',
@@ -142,7 +142,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-convert-format': {
-      icon: '🔄', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '格式转换', subtitle: '转换节点',
       fields: [
         { key: '_hint_cf', type: 'static', text: '选择目标格式及转换选项；配置将保存在节点 config 供执行端解析。' },
@@ -169,7 +169,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-split-document': {
-      icon: '✂️', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '文档分割', subtitle: '分割节点',
       fields: [
         { key: 'splitMethod', label: '分割方式', type: 'select',
@@ -180,7 +180,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-keyword-highlight': {
-      icon: '🖍️', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '关键词高亮', subtitle: '增强节点',
       fields: [
         { key: 'topK', label: '关键词数量', type: 'input', placeholder: '默认 10' },
@@ -189,7 +189,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-sensitive-masking': {
-      icon: '🔒', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '敏感信息脱敏', subtitle: '安全节点',
       fields: [
         { key: 'maskToken', label: '掩码符号', type: 'input', placeholder: '默认 *' },
@@ -197,7 +197,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-term-normalize': {
-      icon: '📚', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '术语统一替换', subtitle: '规范节点',
       fields: [
         { key: 'termDictionary', label: '术语词典', type: 'textarea', placeholder: '示例：A=>标准术语A; B=>标准术语B' },
@@ -205,7 +205,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-outline-generate': {
-      icon: '🧭', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '结构化提纲生成', subtitle: '分析节点',
       fields: [
         { key: 'maxDepth', label: '最大层级', type: 'input', placeholder: '默认 3' },
@@ -213,21 +213,21 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-sentiment-enhanced': {
-      icon: '📈', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '情感倾向分析', subtitle: '分析节点',
       fields: [
         { key: 'prompt', label: '自定义分析规则', type: 'textarea' }
       ]
     },
     'schema-timeline-extract': {
-      icon: '🕒', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '时间线抽取', subtitle: '抽取节点',
       fields: [
         { key: 'prompt', label: '自定义抽取规则', type: 'textarea' }
       ]
     },
     'schema-save': {
-      icon: '💾', iconClass: 'output',
+      icon: '', iconClass: 'output',
       title: '保存文件', subtitle: '输出节点',
       fields: [
         { key: 'savePath', label: '保存路径', type: 'input' },
@@ -235,7 +235,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-library-output': {
-      icon: '📁', iconClass: 'output',
+      icon: '', iconClass: 'output',
       title: '输出文件', subtitle: '输出节点',
       fields: [
         { key: 'outputMode', label: '输出模式', type: 'output-mode-select' },
@@ -247,7 +247,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     },
     // —— 以下为《工作流编排-待办与用例》「节点配置」对齐的专项 schema ——
     'schema-entity-extraction': {
-      icon: '🏷️', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '实体提取', subtitle: '实体与结构化字段',
       fields: [
         { key: '_hint_entity', type: 'static', text: '从上游文档中抽取结构化实体；字段名与类型将随工作流保存到 config。' },
@@ -258,7 +258,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-data-process': {
-      icon: '📐', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '数据处理', subtitle: '表格类操作',
       fields: [
         { key: '_hint_dp', type: 'static', text: '针对表格数据：先选择处理类型，再填写对应参数（与《节点处理》数据处理章节一致）。' },
@@ -304,7 +304,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-data-clean': {
-      icon: '🧼', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '数据清洗', subtitle: '规则与规范化',
       fields: [
         { key: '_hint_dc', type: 'static', text: '可多选下方规则；实际清洗与预览在执行阶段由服务端/执行引擎应用（可先保存配置再联调）。' },
@@ -326,7 +326,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-table-extract': {
-      icon: '📑', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '表格提取', subtitle: '从文档中抽取表格',
       fields: [
         { key: 'tableStrategy', label: '提取策略', type: 'select',
@@ -342,7 +342,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-data-rollup': {
-      icon: '📈', iconClass: 'ai',
+      icon: '', iconClass: 'ai',
       title: '数据汇总', subtitle: '统计汇总',
       fields: [
         { key: 'rollupDims', label: '分类维度（列）', type: 'textarea', placeholder: '逗号或换行分隔' },
@@ -351,7 +351,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-save-excel': {
-      icon: '📗', iconClass: 'output',
+      icon: '', iconClass: 'output',
       title: '保存 Excel', subtitle: '输出节点',
       fields: [
         { key: 'savePath', label: '相对路径或文件名前缀', type: 'input', placeholder: '可选' },
@@ -360,7 +360,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       ]
     },
     'schema-save-text': {
-      icon: '📝', iconClass: 'output',
+      icon: '', iconClass: 'output',
       title: '保存文本', subtitle: '输出节点',
       fields: [
         { key: 'outputEncoding', label: '编码', type: 'select',
@@ -380,27 +380,27 @@ export const useWorkflowStore = defineStore('workflow', () => {
       section: '输入',
       items: [
         {
-          icon: '📕', name: 'PDF 输入', type: 'input', title: 'PDF 输入', body: '导入 PDF 文件',
+          icon: '', name: 'PDF 输入', type: 'input', title: 'PDF 输入', body: '导入 PDF 文件',
           schemaKey: 'schema-pdf-input',
           schema: null // 动态从 nodeSchemas 获取
         },
         {
-          icon: '📝', name: 'MD 输入', type: 'input', title: 'MD 输入', body: '导入 Markdown 文件',
+          icon: '', name: 'MD 输入', type: 'input', title: 'MD 输入', body: '导入 Markdown 文件',
           schemaKey: 'schema-md-input',
           schema: null
         },
         {
-          icon: '📄', name: 'TXT 输入', type: 'input', title: 'TXT 输入', body: '导入 TXT 文本文件',
+          icon: '', name: 'TXT 输入', type: 'input', title: 'TXT 输入', body: '导入 TXT 文本文件',
           schemaKey: 'schema-txt-input',
           schema: null
         },
         {
-          icon: '📘', name: 'DOCX 输入', type: 'input', title: 'DOCX 输入', body: '导入 Word 文档',
+          icon: '', name: 'DOCX 输入', type: 'input', title: 'DOCX 输入', body: '导入 Word 文档',
           schemaKey: 'schema-docx-input',
           schema: null
         },
         {
-          icon: '📊', name: 'XLSX 输入', type: 'input', title: 'XLSX 输入', body: '导入 Excel 表格数据',
+          icon: '', name: 'XLSX 输入', type: 'input', title: 'XLSX 输入', body: '导入 Excel 表格数据',
           schemaKey: 'schema-xlsx-input',
           schema: null
         }
@@ -410,92 +410,92 @@ export const useWorkflowStore = defineStore('workflow', () => {
       section: '处理',
       items: [
         {
-          icon: '🌍', name: 'AI 翻译', type: 'ai', title: 'AI 翻译', body: '使用大模型进行智能翻译处理',
+          icon: '', name: 'AI 翻译', type: 'ai', title: 'AI 翻译', body: '使用大模型进行智能翻译处理',
           schemaKey: 'schema-translate',
           schema: null
         },
         {
-          icon: '📋', name: '内容提取', type: 'ai', title: '内容提取', body: '生成摘要和提取关键要点',
+          icon: '', name: '内容提取', type: 'ai', title: '内容提取', body: '生成摘要和提取关键要点',
           schemaKey: 'schema-extract-summary',
           schema: null
         },
         {
-          icon: '📊', name: '数据抽取', type: 'ai', title: '数据抽取', body: '从文档中提取结构化数据',
+          icon: '', name: '数据抽取', type: 'ai', title: '数据抽取', body: '从文档中提取结构化数据',
           schemaKey: 'schema-extract-data',
           schema: null
         },
         {
-          icon: '🏷️', name: '实体提取', type: 'ai', title: '实体提取', body: '按字段与自定义实体类型抽取结构化信息',
+          icon: '', name: '实体提取', type: 'ai', title: '实体提取', body: '按字段与自定义实体类型抽取结构化信息',
           schemaKey: 'schema-entity-extraction',
           schema: null
         },
         {
-          icon: '📐', name: '数据处理', type: 'ai', title: '数据处理', body: '表格排序、筛选、汇总、去重与列变换',
+          icon: '', name: '数据处理', type: 'ai', title: '数据处理', body: '表格排序、筛选、汇总、去重与列变换',
           schemaKey: 'schema-data-process',
           schema: null
         },
         {
-          icon: '🧼', name: '数据清洗', type: 'ai', title: '数据清洗', body: '去空格、格式统一与脏数据规范化',
+          icon: '', name: '数据清洗', type: 'ai', title: '数据清洗', body: '去空格、格式统一与脏数据规范化',
           schemaKey: 'schema-data-clean',
           schema: null
         },
         {
-          icon: '📑', name: '表格提取', type: 'ai', title: '表格提取', body: '从 PDF/Word 等文档中提取表格结构',
+          icon: '', name: '表格提取', type: 'ai', title: '表格提取', body: '从 PDF/Word 等文档中提取表格结构',
           schemaKey: 'schema-table-extract',
           schema: null
         },
         {
-          icon: '📈', name: '数据汇总', type: 'ai', title: '数据汇总', body: '按维度统计汇总指标',
+          icon: '', name: '数据汇总', type: 'ai', title: '数据汇总', body: '按维度统计汇总指标',
           schemaKey: 'schema-data-rollup',
           schema: null
         },
         {
-          icon: '🔍', name: '内容分析', type: 'ai', title: '内容分析', body: '关键词提取和实体识别',
+          icon: '', name: '内容分析', type: 'ai', title: '内容分析', body: '关键词提取和实体识别',
           schemaKey: 'schema-analyze-content',
           schema: null
         },
         {
-          icon: '✨', name: '文本增强', type: 'ai', title: '文本增强', body: '语法检查、润色和改写',
+          icon: '', name: '文本增强', type: 'ai', title: '文本增强', body: '语法检查、润色和改写',
           schemaKey: 'schema-enhance-text',
           schema: null
         },
         {
-          icon: '🔄', name: '格式转换', type: 'ai', title: '格式转换', body: '在多种格式间智能转换',
+          icon: '', name: '格式转换', type: 'ai', title: '格式转换', body: '在多种格式间智能转换',
           schemaKey: 'schema-convert-format',
           schema: null
         },
         {
-          icon: '✂️', name: '文档分割', type: 'ai', title: '文档分割', body: '智能分割文档为多个部分',
+          icon: '', name: '文档分割', type: 'ai', title: '文档分割', body: '智能分割文档为多个部分',
           schemaKey: 'schema-split-document',
           schema: null
         },
         {
-          icon: '🖍️', name: '关键词高亮', type: 'ai', title: '关键词高亮', body: '提取关键词并在结果中标注高亮',
+          icon: '', name: '关键词高亮', type: 'ai', title: '关键词高亮', body: '提取关键词并在结果中标注高亮',
           schemaKey: 'schema-keyword-highlight',
           schema: null
         },
         {
-          icon: '🔒', name: '敏感信息脱敏', type: 'ai', title: '敏感信息脱敏', body: '手机号/身份证/邮箱等自动掩码',
+          icon: '', name: '敏感信息脱敏', type: 'ai', title: '敏感信息脱敏', body: '手机号/身份证/邮箱等自动掩码',
           schemaKey: 'schema-sensitive-masking',
           schema: null
         },
         {
-          icon: '📚', name: '术语统一替换', type: 'ai', title: '术语统一替换', body: '按词典规范化术语表达',
+          icon: '', name: '术语统一替换', type: 'ai', title: '术语统一替换', body: '按词典规范化术语表达',
           schemaKey: 'schema-term-normalize',
           schema: null
         },
         {
-          icon: '🧭', name: '结构化提纲生成', type: 'ai', title: '结构化提纲生成', body: '按层级输出目录提纲',
+          icon: '', name: '结构化提纲生成', type: 'ai', title: '结构化提纲生成', body: '按层级输出目录提纲',
           schemaKey: 'schema-outline-generate',
           schema: null
         },
         {
-          icon: '📈', name: '情感倾向分析', type: 'ai', title: '情感倾向分析', body: '输出打分、标签和依据',
+          icon: '', name: '情感倾向分析', type: 'ai', title: '情感倾向分析', body: '输出打分、标签和依据',
           schemaKey: 'schema-sentiment-enhanced',
           schema: null
         },
         {
-          icon: '🕒', name: '时间线抽取', type: 'ai', title: '时间线抽取', body: '提取事件并按时间排序',
+          icon: '', name: '时间线抽取', type: 'ai', title: '时间线抽取', body: '提取事件并按时间排序',
           schemaKey: 'schema-timeline-extract',
           schema: null
         }
@@ -505,22 +505,22 @@ export const useWorkflowStore = defineStore('workflow', () => {
       section: '输出',
       items: [
         {
-          icon: '💾', name: '保存文件', type: 'output', title: '保存文件', body: '保存处理结果到本地文件',
+          icon: '', name: '保存文件', type: 'output', title: '保存文件', body: '保存处理结果到本地文件',
           schemaKey: 'schema-save',
           schema: null
         },
         {
-          icon: '📁', name: '输出文件', type: 'output', title: '输出文件', body: '保存结果到文档库或直接下载',
+          icon: '', name: '输出文件', type: 'output', title: '输出文件', body: '保存结果到文档库或直接下载',
           schemaKey: 'schema-library-output',
           schema: null
         },
         {
-          icon: '📗', name: '保存 Excel', type: 'output', title: '保存 Excel', body: '将表格结果保存为 Excel 文件',
+          icon: '', name: '保存 Excel', type: 'output', title: '保存 Excel', body: '将表格结果保存为 Excel 文件',
           schemaKey: 'schema-save-excel',
           schema: null
         },
         {
-          icon: '📝', name: '保存文本', type: 'output', title: '保存文本', body: '将文本结果保存为 txt / md',
+          icon: '', name: '保存文本', type: 'output', title: '保存文本', body: '将文本结果保存为 txt / md',
           schemaKey: 'schema-save-text',
           schema: null
         }
@@ -537,6 +537,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const nodeProgress = ref([])
   const currentNodeId = ref('')
   const currentNodeName = ref('')
+  /** running | completed | failed（与后端 status 对齐，idle 表示未在执行） */
+  const executionStatus = ref('idle')
+  const executionCurrentFileIndex = ref(0)
+  const executionTotalFiles = ref(0)
+  const executionCurrentFileName = ref('')
 
   // ==================== 计算属性 ====================
 
@@ -572,7 +577,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
         workflows.value[w.id] = {
           id: w.id,
           name: w.name,
-          icon: w.icon || '🔧',
+          icon: w.icon || '',
           time: _formatTime(w.updated_at || w.created_at),
           type: w.type || 'custom',
           nodes: w.nodes || [],           // 完整节点列表（含 configValues、schemaKey）
@@ -593,7 +598,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       templates.value = list.map(t => ({
         id: t.id,
         name: t.name,
-        icon: t.icon || '📄',
+        icon: t.icon || '',
         description: t.description || '',
         type: 'template',
         time: '系统预设',
@@ -693,7 +698,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     workflows.value[id] = {
       id,
       name,
-      icon: '🔧',
+      icon: '',
       time: '刚刚',
       type: 'custom',
       nodes: [],
@@ -708,7 +713,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       await workflowApi.saveWorkflow({
         id,
         name,
-        icon: '🔧',
+        icon: '',
         type: 'custom',
         nodes: [],
         config: {},
@@ -728,7 +733,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       await workflowApi.saveWorkflow({
         id: wf.id,
         name: wf.name,
-        icon: wf.icon || '🔧',
+        icon: wf.icon || '',
         type: 'custom',
         nodes: wf.nodes,
         config: wf.config || {},
@@ -771,22 +776,36 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  /** 执行顺序前移一格（在 pipeline 中先执行一步） */
+  /** 执行顺序前移一格（在 pipeline 中先执行一步）；与相邻节点互换画布坐标，连线与执行顺序一致 */
   function moveNodeEarlier(nodeId) {
     const idx = canvasNodes.value.findIndex(n => n.id === nodeId)
     if (idx <= 0) return
     const list = canvasNodes.value
     const item = list[idx]
+    const prev = list[idx - 1]
+    const tx = item.x
+    const ty = item.y
+    item.x = prev.x
+    item.y = prev.y
+    prev.x = tx
+    prev.y = ty
     list.splice(idx, 1)
     list.splice(idx - 1, 0, item)
   }
 
-  /** 执行顺序后移一格（在 pipeline 中后执行一步） */
+  /** 执行顺序后移一格（在 pipeline 中后执行一步）；与相邻节点互换画布坐标，连线与执行顺序一致 */
   function moveNodeLater(nodeId) {
     const idx = canvasNodes.value.findIndex(n => n.id === nodeId)
     if (idx < 0 || idx >= canvasNodes.value.length - 1) return
     const list = canvasNodes.value
     const item = list[idx]
+    const next = list[idx + 1]
+    const tx = item.x
+    const ty = item.y
+    item.x = next.x
+    item.y = next.y
+    next.x = tx
+    next.y = ty
     list.splice(idx, 1)
     list.splice(idx + 1, 0, item)
   }
@@ -981,12 +1000,59 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return out
   }
 
+  function _normalizeExecutionLog(log) {
+    if (log == null) return { type: 'info', message: '' }
+    if (typeof log === 'string') return { type: 'info', message: log }
+    const rawType = String(log.type || 'info').toLowerCase()
+    const type =
+      rawType === 'success' || rawType === 'complete' ? 'done' : rawType === 'warning' ? 'warn' : rawType
+    const allowed = ['info', 'done', 'warn', 'error']
+    const t = allowed.includes(type) ? type : 'info'
+    const msg =
+      log.message != null
+        ? String(log.message)
+        : log.msg != null
+          ? String(log.msg)
+          : ''
+    return { type: t, message: msg || JSON.stringify(log) }
+  }
+
+  /** 将服务端返回的完整 logs 中尚未追加的部分写入 executionLogs，返回新的游标 */
+  function _appendNewLogsFromResponse(res, lastCount) {
+    const raw = res?.logs
+    if (!Array.isArray(raw) || raw.length <= lastCount) return lastCount
+    for (let i = lastCount; i < raw.length; i++) {
+      executionLogs.value.push(_normalizeExecutionLog(raw[i]))
+    }
+    return raw.length
+  }
+
+  function _applyExecutionSnapshot(res) {
+    const idx = res?.current_file_index ?? res?.currentFileIndex ?? 0
+    const total = res?.total_files ?? res?.totalFiles ?? 0
+    const name = res?.current_file_name ?? res?.currentFileName ?? ''
+    executionCurrentFileIndex.value = Number(idx) || 0
+    executionTotalFiles.value = Number(total) || 0
+    executionCurrentFileName.value = String(name || '')
+    if (res?.progress != null && res.progress !== '') {
+      const p = Number(res.progress)
+      if (!Number.isNaN(p)) executionProgress.value = Math.min(100, Math.max(0, p))
+    }
+    nodeProgress.value = Array.isArray(res?.node_progress) ? res.node_progress : nodeProgress.value
+    currentNodeId.value = res?.current_node_id ?? res?.currentNodeId ?? ''
+    currentNodeName.value = res?.current_node_name ?? res?.currentNodeName ?? ''
+  }
+
   async function executeWorkflow() {
     if (isExecuting.value) return
     isExecuting.value = true
     executionProgress.value = 0
     executionLogs.value = []
     outputFiles.value = []
+    executionStatus.value = 'running'
+    executionCurrentFileIndex.value = 0
+    executionTotalFiles.value = 0
+    executionCurrentFileName.value = ''
     nodeProgress.value = canvasNodes.value.map((n, idx) => ({
       id: n.id,
       title: n.title,
@@ -1034,11 +1100,17 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
       const res = await workflowApi.execute(params)
       const executionId = res?.execution_id
+      if (!executionId) {
+        executionLogs.value.push({ type: 'error', message: '未返回 execution_id，无法轮询状态' })
+        executionStatus.value = 'failed'
+        return
+      }
 
       // 轮询执行状态
       await pollExecution(executionId)
     } catch (e) {
       executionLogs.value.push({ type: 'error', message: e.message })
+      executionStatus.value = 'failed'
     } finally {
       isExecuting.value = false
     }
@@ -1052,34 +1124,33 @@ export const useWorkflowStore = defineStore('workflow', () => {
       try {
         const res = await workflowApi.getExecutionStatus(executionId)
         const status = res?.status
-        nodeProgress.value = Array.isArray(res?.node_progress) ? res.node_progress : nodeProgress.value
-        currentNodeId.value = res?.current_node_id || ''
-        currentNodeName.value = res?.current_node_name || ''
+        _applyExecutionSnapshot(res)
+        lastLogCount = _appendNewLogsFromResponse(res, lastLogCount)
+
         if (status === 'completed') {
           executionProgress.value = 100
-          // 追加 output_files
-          if (res.output_files && res.output_files.length > 0) {
-            res.output_files.forEach(f => {
-              executionLogs.value.push({ type: 'done', message: `📥 ${f.name}` })
-            })
+          executionStatus.value = 'completed'
+          if (Array.isArray(res.output_files) && res.output_files.length > 0) {
             outputFiles.value = res.output_files
           }
-          executionLogs.value.push({ type: 'done', message: `全部完成，共 ${res.output_files?.length || 0} 个输出文件` })
           break
-        } else if (status === 'failed') {
-          executionLogs.value.push({ type: 'error', message: res?.error || '执行失败' })
+        }
+        if (status === 'failed') {
+          executionStatus.value = 'failed'
           break
-        } else {
-          executionProgress.value = res.progress || Math.round((res.current_file_index / Math.max(res.total_files, 1)) * 100)
-          // 只追加新日志（服务器返回完整历史）
-          if (res.logs && res.logs.length > lastLogCount) {
-            const newLogs = res.logs.slice(lastLogCount)
-            newLogs.forEach(log => executionLogs.value.push(log))
-            lastLogCount = res.logs.length
+        }
+
+        // running / pending 等：进度条优先用服务端 progress，否则按文件序号估算
+        const tf = executionTotalFiles.value || 0
+        const ci = executionCurrentFileIndex.value || 0
+        if (res?.progress == null || res.progress === '') {
+          if (tf > 0 && ci > 0) {
+            executionProgress.value = Math.min(99, Math.max(0, Math.round((ci / tf) * 100)))
           }
         }
       } catch (e) {
         executionLogs.value.push({ type: 'error', message: e.message })
+        executionStatus.value = 'failed'
         break
       }
       await new Promise(r => setTimeout(r, 2000))
@@ -1087,6 +1158,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
     if (polls >= maxPolls) {
       executionLogs.value.push({ type: 'error', message: '执行超时' })
+      executionStatus.value = 'failed'
     }
   }
 
@@ -1115,14 +1187,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
     workflows.value[templateId] = {
       id: templateId,
       name: '文档翻译流',
-      icon: '🌍',
+      icon: '',
       time: '系统预设',
       type: 'template',
       nodes: [
         {
           id: 'n_pdf',
           type: 'input',
-          icon: '📕',
+          icon: '',
           title: 'PDF 输入',
           body: '导入 PDF 文件',
           configValues: {
@@ -1136,7 +1208,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
         {
           id: 'n_translate',
           type: 'ai',
-          icon: '🌍',
+          icon: '',
           title: 'AI 翻译',
           body: '使用大模型进行智能翻译处理',
           configValues: {
@@ -1149,7 +1221,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
         {
           id: 'n_output',
           type: 'output',
-          icon: '📁',
+          icon: '',
           title: '输出文件',
           body: '保存结果到文档库或直接下载',
           configValues: {
@@ -1225,6 +1297,10 @@ export const useWorkflowStore = defineStore('workflow', () => {
     nodeProgress,
     currentNodeId,
     currentNodeName,
+    executionStatus,
+    executionCurrentFileIndex,
+    executionTotalFiles,
+    executionCurrentFileName,
     // 计算属性
     currentWorkflow,
     customWorkflows,

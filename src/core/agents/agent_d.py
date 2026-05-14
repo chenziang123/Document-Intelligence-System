@@ -1,6 +1,6 @@
 """core.agents.agent_d
 
-Agent_D: Excel 数据筛选与填表 Agent（由原 Agent_B 改名而来）。
+Agent_D: Excel 数据筛选与填表 Agent。
 
 职责：
 - 从 Excel（.xlsx）读取表格数据
@@ -30,7 +30,7 @@ from utils.logger import get_logger
 
 class AgentB(BaseAgent):
     """
-    Agent_D: Excel 数据筛选与填表（历史兼容类名：AgentB）
+    Agent_D: Excel 数据筛选与填表。类名 AgentB 与编排入口 agent_b 保持一致。
 
     能力：
     - 理解自然语言筛选条件
@@ -41,8 +41,6 @@ class AgentB(BaseAgent):
 
     def __init__(self, config: Optional[SystemConfig] = None):
         super().__init__(config)
-        # 文件已迁移为 Agent_D，但为了尽量不破坏旧代码，保留类名 AgentB。
-        # 对外展示名称使用 Agent_D。
         self.name = "Agent_D"
         self.agent_type = "extraction"
         self.logger = get_logger(__name__)
@@ -1640,8 +1638,7 @@ class AgentB(BaseAgent):
         return str(output_path)
 
 
-# 兼容：执行器/服务层默认从 core.agents.agent_d 导入 AgentD。
-# 这里提供一个别名，不改变现有实现逻辑。
+# 对外别名：执行器与服务层从本模块导入 AgentD。
 AgentD = AgentB
 
 

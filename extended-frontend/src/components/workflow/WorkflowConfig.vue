@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { MousePointerClick } from 'lucide-vue-next'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useLibraryStore } from '../../stores/libraryStore'
 
@@ -376,14 +377,14 @@ function nodeStatusText(status) {
         :class="{ active: activeTab === 'node' }"
         @click="switchTab('node')"
       >
-        <span>📋</span> 节点配置
+        节点配置
       </button>
       <button
         class="config-tab"
         :class="{ active: activeTab === 'wf' }"
         @click="switchTab('wf')"
       >
-        <span>⚙️</span> 全局设置
+        全局设置
       </button>
     </div>
 
@@ -393,7 +394,7 @@ function nodeStatusText(status) {
       <!-- ======== 全局设置 ======== -->
       <div v-if="activeTab === 'wf'" class="config-section">
         <div class="node-config-header">
-          <div class="node-config-icon-wrap input-icon">⚙️</div>
+          <div class="node-config-icon-wrap wf-settings-icon" aria-hidden="true" />
           <div>
             <div class="node-config-title">{{ workflowStore.workflowName }}</div>
             <div class="node-config-subtitle">全局配置 · {{ workflowStore.canvasNodes.length }} 个节点</div>
@@ -425,7 +426,7 @@ function nodeStatusText(status) {
                   v-for="space in libraryStore.spaces"
                   :key="space.id"
                   :value="space.id"
-                >{{ space.icon }} {{ space.name }}</option>
+                >{{ space.name }}</option>
               </select>
             </div>
             <div class="field">
@@ -440,7 +441,7 @@ function nodeStatusText(status) {
                   v-for="space in libraryStore.spaces"
                   :key="space.id"
                   :value="space.id"
-                >{{ space.icon }} {{ space.name }}</option>
+                >{{ space.name }}</option>
               </select>
             </div>
           </div>
@@ -476,7 +477,6 @@ function nodeStatusText(status) {
           @click="handleSaveWorkflow"
         >
           <span v-if="isSaving" class="save-spinner"></span>
-          <span v-else>💾</span>
           <span>{{ isSaving ? '保存中...' : '保存工作流' }}</span>
         </button>
       </div>
@@ -504,9 +504,7 @@ function nodeStatusText(status) {
 
         <!-- Node Header -->
         <div class="node-config-header">
-          <div class="node-config-icon-wrap" :class="workflowStore.selectedNode.type + '-icon'">
-            {{ workflowStore.selectedNode.icon }}
-          </div>
+          <div class="node-config-icon-wrap" :class="workflowStore.selectedNode.type" aria-hidden="true" />
           <div>
             <div class="node-config-title">{{ workflowStore.selectedNode.title }}</div>
             <div class="node-config-subtitle">{{ getNodeSchema(workflowStore.selectedNode)?.subtitle }}</div>
@@ -517,7 +515,7 @@ function nodeStatusText(status) {
         <div v-if="workflowStore.canvasNodes.length > 1" class="config-group step-order-group">
           <div class="config-group-label">执行顺序</div>
           <p class="step-order-hint">
-            画布拖拽只改变卡片位置；流水线先后请用下方按钮，或节点卡片上的 ◀ ▶。
+            画布拖拽仅调整布局；「前移 / 后移」会与相邻卡片互换画布位置，使连线与执行顺序一致。
           </p>
           <div class="step-order-row">
             <button
@@ -557,12 +555,12 @@ function nodeStatusText(status) {
                   class="source-tab"
                   :class="{ active: currentOutputMode === 'download' }"
                   @click="handleOutputModeChange('download')"
-                >📥 仅输出（可下载）</button>
+                >仅输出（可下载）</button>
                 <button
                   class="source-tab"
                   :class="{ active: currentOutputMode === 'library' }"
                   @click="handleOutputModeChange('library')"
-                >📚 保存到文档库</button>
+                >保存到文档库</button>
               </div>
             </div>
 
@@ -593,8 +591,8 @@ function nodeStatusText(status) {
                   v-for="space in libraryStore.spaces"
                   :key="space.id"
                   :value="space.id"
-                >{{ space.icon }} {{ space.name }}</option>
-                <option value="__new__">➕ 新建文档库</option>
+                >{{ space.name }}</option>
+                <option value="__new__">新建文档库…</option>
               </select>
               <div v-if="field.key === 'targetSpaceId' && currentTargetSpaceId === '__new__'" class="new-space-form">
                 <input
@@ -744,12 +742,12 @@ function nodeStatusText(status) {
               class="source-tab"
               :class="{ active: currentInputSource === 'library' }"
               @click="handleInputSourceChange('library')"
-            >📚 从文档库</button>
+            >从文档库</button>
             <button
               class="source-tab"
               :class="{ active: currentInputSource === 'local' }"
               @click="handleInputSourceChange('local')"
-            >📁 本地上传</button>
+            >本地上传</button>
           </div>
 
           <!-- 文档库文档列表 -->
@@ -772,9 +770,9 @@ function nodeStatusText(status) {
                 @click="handleDocToggle(doc.id)"
               >
                 <div class="doc-list-check">
-                  <span v-if="workflowStore.selectedDocs.find(d => d.id === doc.id)">✓</span>
+                  <span v-if="workflowStore.selectedDocs.find(d => d.id === doc.id)" class="check-mark" />
                 </div>
-                <span class="doc-list-icon">📄</span>
+                <span class="doc-list-icon" aria-hidden="true" />
                 <span class="doc-list-name">{{ doc.name }}</span>
                 <span class="doc-list-size">{{ doc.size }}</span>
               </div>
@@ -797,7 +795,7 @@ function nodeStatusText(status) {
                 style="display:none"
                 @change="handleFileSelect"
               />
-              <div class="upload-zone-icon">📁</div>
+              <div class="upload-zone-icon" aria-hidden="true" />
               <div class="upload-zone-text">点击或拖拽文件到此处</div>
               <div class="upload-zone-hint">支持 PDF、Markdown、Word、Excel、TXT</div>
             </div>
@@ -809,7 +807,7 @@ function nodeStatusText(status) {
                 :key="file.id"
                 class="local-file-item"
               >
-                <span class="local-file-icon">📄</span>
+                <span class="local-file-icon" aria-hidden="true" />
                 <span class="local-file-name">{{ file.name }}</span>
                 <span class="local-file-size">{{ _formatSize(file.size) }}</span>
                 <button
@@ -832,7 +830,7 @@ function nodeStatusText(status) {
               :key="doc.id"
               class="selected-doc-item"
             >
-              <span class="selected-doc-icon">📄</span>
+              <span class="selected-doc-icon" aria-hidden="true" />
               <span class="selected-doc-name">{{ doc.name }}</span>
               <span class="selected-doc-size">{{ doc.size }}</span>
             </div>
@@ -841,7 +839,7 @@ function nodeStatusText(status) {
               :key="file.id"
               class="selected-doc-item"
             >
-              <span class="selected-doc-icon">📁</span>
+              <span class="selected-doc-icon" aria-hidden="true" />
               <span class="selected-doc-name">{{ file.name }}</span>
               <span class="selected-doc-size">{{ _formatSize(file.size) }}</span>
             </div>
@@ -909,7 +907,9 @@ function nodeStatusText(status) {
 
       <!-- ======== 无选中节点 — 空状态 ======== -->
       <div v-else class="config-empty-state">
-        <div class="empty-icon">⬡</div>
+        <div class="empty-icon empty-icon-shape" aria-hidden="true">
+          <MousePointerClick :size="28" :stroke-width="1.75" />
+        </div>
         <div class="empty-title">点击节点以配置</div>
         <div class="empty-desc">在画布上点击任意节点<br/>右侧将切换显示该节点的专属配置</div>
         <div class="empty-nodes-hint" v-if="workflowStore.canvasNodes.length > 0">
@@ -921,7 +921,7 @@ function nodeStatusText(status) {
             :class="{ done: workflowStore.selectedNodeId && i < workflowStore.canvasNodes.findIndex(n => n.id === workflowStore.selectedNodeId) }"
             @click="workflowStore.selectNode(node.id)"
           >
-            <span class="empty-node-icon">{{ node.icon }}</span>
+            <span class="empty-node-icon" :class="node.type" aria-hidden="true" />
             <span>{{ node.title }}</span>
           </div>
         </div>
@@ -961,19 +961,19 @@ function nodeStatusText(status) {
 
 .source-tab.active {
   background: var(--bg-card);
-  border-color: rgba(168, 85, 247, 0.3);
-  color: var(--accent-purple);
+  border-color: rgba(37, 99, 235, 0.3);
+  color: var(--accent-primary);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.15);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
 }
 
 .doc-count-badge {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-primary);
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(37, 99, 235, 0.12);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 0;
   margin-left: 8px;
 }
 
@@ -1003,7 +1003,7 @@ function nodeStatusText(status) {
   width: 6px;
   height: 6px;
   background: var(--accent-purple);
-  border-radius: 50%;
+  border-radius: 0;
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
@@ -1047,19 +1047,17 @@ function nodeStatusText(status) {
 }
 
 .doc-list-item.selected {
-  background: rgba(99, 102, 241, 0.08);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .doc-list-check {
   width: 18px;
   height: 18px;
   border: 2px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  color: var(--accent-primary);
   flex-shrink: 0;
   transition: all 0.15s;
 }
@@ -1067,11 +1065,28 @@ function nodeStatusText(status) {
 .doc-list-item.selected .doc-list-check {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: white;
+}
+
+.doc-list-item.selected .check-mark {
+  border-color: #fff;
+}
+
+.check-mark {
+  display: block;
+  width: 5px;
+  height: 9px;
+  border: solid transparent;
+  border-width: 0 2px 2px 0;
+  border-color: var(--accent-primary);
+  transform: rotate(45deg);
+  margin-bottom: 2px;
 }
 
 .doc-list-icon {
-  font-size: 16px;
+  width: 3px;
+  height: 22px;
+  border-radius: 0;
+  background: rgba(37, 99, 235, 0.22);
   flex-shrink: 0;
 }
 
@@ -1107,13 +1122,17 @@ function nodeStatusText(status) {
 }
 
 .upload-zone:hover {
-  border-color: var(--accent-purple);
-  background: rgba(168, 85, 247, 0.05);
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(37, 99, 235, 0.04);
 }
 
 .upload-zone-icon {
-  font-size: 32px;
-  margin-bottom: 8px;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 8px;
+  border-radius: 0;
+  border: 2px dashed rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.05);
 }
 
 .upload-zone-text {
@@ -1149,7 +1168,10 @@ function nodeStatusText(status) {
 }
 
 .local-file-icon {
-  font-size: 16px;
+  width: 3px;
+  height: 22px;
+  border-radius: 0;
+  background: rgba(37, 99, 235, 0.22);
   flex-shrink: 0;
 }
 
@@ -1175,7 +1197,7 @@ function nodeStatusText(status) {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 50%;
+  border-radius: 0;
   font-size: 16px;
   color: var(--text-muted);
   cursor: pointer;
@@ -1200,7 +1222,7 @@ function nodeStatusText(status) {
   padding: 6px 14px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 20px;
+  border-radius: 0;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -1323,7 +1345,7 @@ function nodeStatusText(status) {
   display: inline-block;
   margin: 4px 0 8px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 600;
 }
@@ -1380,7 +1402,7 @@ function nodeStatusText(status) {
   height: 18px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: white;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.8s linear infinite;
 }
 
@@ -1400,7 +1422,7 @@ function nodeStatusText(status) {
 .exec-progress-bar {
   height: 6px;
   background: var(--bg-secondary);
-  border-radius: 3px;
+  border-radius: 0;
   overflow: hidden;
   margin-bottom: 12px;
 }
@@ -1408,7 +1430,7 @@ function nodeStatusText(status) {
 .exec-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-success), var(--accent-cyan));
-  border-radius: 3px;
+  border-radius: 0;
   transition: width 0.5s ease;
 }
 
@@ -1440,7 +1462,7 @@ function nodeStatusText(status) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-size: 11px;
@@ -1465,14 +1487,14 @@ function nodeStatusText(status) {
 .node-progress-track {
   height: 4px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: 0;
   background: var(--bg-tertiary);
 }
 
 .node-progress-fill {
   height: 100%;
   width: 0;
-  border-radius: 2px;
+  border-radius: 0;
   background: var(--text-muted);
   transition: width 0.35s ease;
 }
@@ -1523,7 +1545,7 @@ function nodeStatusText(status) {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--bg-tertiary);
   margin-bottom: 6px;
 }
@@ -1545,7 +1567,7 @@ function nodeStatusText(status) {
 
 .output-download-btn {
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--accent-primary);
   color: #fff;
   border: none;
@@ -1618,7 +1640,7 @@ function nodeStatusText(status) {
   height: 16px;
   border: 2px solid rgba(255,255,255,0.3);
   border-top-color: white;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.8s linear infinite;
 }
 

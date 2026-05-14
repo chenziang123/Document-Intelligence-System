@@ -76,15 +76,6 @@ export const useFileStore = defineStore('file', () => {
     }
   }
 
-  function getFileIcon(filename) {
-    const ext = filename.split('.').pop().toLowerCase()
-    if (['pdf'].includes(ext)) return '📄'
-    if (['doc', 'docx'].includes(ext)) return '📝'
-    if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊'
-    if (['png', 'jpg', 'jpeg'].includes(ext)) return '🖼️'
-    return '📎'
-  }
-
   function getFileTypeLabel(filename) {
     const ext = filename.split('.').pop().toLowerCase()
     const map = {
@@ -101,6 +92,10 @@ export const useFileStore = defineStore('file', () => {
       jpeg: 'JPEG',
     }
     return map[ext] || ext.toUpperCase()
+  }
+
+  function getFileIcon(filename) {
+    return getFileTypeLabel(filename) || '文件'
   }
 
   function toggleFilesPanel() {

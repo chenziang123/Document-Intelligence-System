@@ -230,7 +230,7 @@ const connPaths = computed(() => {
     const pIn = nodeInPoint(toNode)
     return {
       d: buildConnectionPath(pOut, pIn),
-      key: `conn-${i}`,
+      key: `conn-${fromNode.id}-${toNode.id}`,
       fromId: fromNode.id,
       toId: toNode.id
     }
@@ -321,7 +321,7 @@ const selectedIndex = computed(() => {
           <div class="node-selected-badge">当前选中</div>
           <div class="node-port input-port"></div>
           <div class="node-header">
-            <div class="node-icon" :class="node.type + '-icon'">{{ node.icon }}</div>
+            <div class="node-icon" :class="node.type" aria-hidden="true" />
             <span class="node-title">{{ node.title }}</span>
             <span class="node-step-tag">Step {{ i + 1 }}</span>
             <div

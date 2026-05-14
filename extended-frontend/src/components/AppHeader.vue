@@ -1,4 +1,5 @@
 <script setup>
+import { Bell, Settings, FileText } from 'lucide-vue-next'
 import { useTabStore } from '../stores/tabStore'
 import { useAuthStore } from '../stores/authStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -20,13 +21,13 @@ async function handleLogout() {
 <template>
   <header class="header">
     <div class="header-left">
-      <!-- Logo -->
       <div class="logo">
-        <div class="logo-icon">📄</div>
+        <div class="logo-icon" aria-hidden="true">
+          <FileText :size="20" :stroke-width="2" />
+        </div>
         <span>文档智能系统</span>
       </div>
 
-      <!-- Main Navigation -->
       <nav class="main-nav">
         <button
           v-for="tab in tabStore.tabs"
@@ -36,25 +37,23 @@ async function handleLogout() {
           :data-tab="tab.id"
           @click="handleTabClick(tab.id)"
         >
-          <span class="nav-tab-icon">{{ tab.icon }}</span>
           <span>{{ tab.label }}</span>
         </button>
       </nav>
     </div>
 
     <div class="header-right">
-      <button class="header-btn" title="通知">
-        🔔
+      <button class="header-btn" type="button" title="通知" aria-label="通知">
+        <Bell :size="18" :stroke-width="2" aria-hidden="true" />
       </button>
-      <button class="header-btn" title="设置">
-        ⚙️
+      <button class="header-btn" type="button" title="设置" aria-label="设置">
+        <Settings :size="18" :stroke-width="2" aria-hidden="true" />
       </button>
 
-      <!-- 用户信息区域 -->
       <div class="header-user">
         <div class="user-info">
           <span class="user-name">{{ authStore.userDisplayName }}</span>
-          <button class="logout-btn" @click="handleLogout" title="退出登录">
+          <button type="button" class="logout-btn" @click="handleLogout" title="退出登录">
             退出
           </button>
         </div>

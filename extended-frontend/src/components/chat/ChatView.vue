@@ -3,6 +3,7 @@ defineOptions({ name: 'ChatView' })
 
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { marked } from 'marked'
+import { MessagesSquare, Paperclip, Send, ChevronDown, ChevronRight } from 'lucide-vue-next'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useFileStore } from '../../stores/fileStore'
 import ChatSidebar from './ChatSidebar.vue'
@@ -39,10 +40,10 @@ function switchChatMode(mode) {
 }
 
 const quickActions = [
-  { icon: '📖', text: '分析文档', prompt: '分析这份文档的核心内容' },
-  { icon: '🎯', text: '提取信息', prompt: '提取文档中的关键信息' },
-  { icon: '🌍', text: '翻译内容', prompt: '帮我翻译这篇论文' },
-  { icon: '🔄', text: '使用工作流', action: 'workflow' }
+  { text: '分析文档', prompt: '分析这份文档的核心内容' },
+  { text: '提取信息', prompt: '提取文档中的关键信息' },
+  { text: '翻译内容', prompt: '帮我翻译这篇论文' },
+  { text: '使用工作流', action: 'workflow' }
 ]
 
 function scrollToBottom() {
@@ -362,16 +363,17 @@ function tablePreviewBundleList(msg, index) {
 
 function getFileStyle(fileName) {
   const ext = (fileName || '').split('.').pop().toLowerCase()
+  const label = fileStore.getFileTypeLabel(fileName)
   const map = {
-    pdf:  { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444', icon: '📄' },
-    doc:  { bg: 'rgba(59, 130, 246, 0.15)', text: '#3b82f6', icon: '📝' },
-    docx: { bg: 'rgba(59, 130, 246, 0.15)', text: '#3b82f6', icon: '📝' },
-    xls:  { bg: 'rgba(16, 185, 129, 0.15)', text: '#10b981', icon: '📊' },
-    xlsx: { bg: 'rgba(16, 185, 129, 0.15)', text: '#10b981', icon: '📊' },
-    txt:  { bg: 'rgba(161, 161, 170, 0.15)', text: '#a1a1aa', icon: '📃' },
-    md:   { bg: 'rgba(161, 161, 170, 0.15)', text: '#a1a1aa', icon: '📃' },
+    pdf:  { bg: 'rgba(37, 99, 235, 0.1)', text: '#2563eb', icon: label },
+    doc:  { bg: 'rgba(37, 99, 235, 0.08)', text: '#1d4ed8', icon: label },
+    docx: { bg: 'rgba(37, 99, 235, 0.08)', text: '#1d4ed8', icon: label },
+    xls:  { bg: 'rgba(14, 165, 233, 0.12)', text: '#0284c7', icon: label },
+    xlsx: { bg: 'rgba(14, 165, 233, 0.12)', text: '#0284c7', icon: label },
+    txt:  { bg: 'rgba(100, 116, 139, 0.12)', text: '#64748b', icon: label },
+    md:   { bg: 'rgba(100, 116, 139, 0.12)', text: '#64748b', icon: label },
   }
-  return map[ext] || { bg: 'rgba(161, 161, 170, 0.15)', text: '#a1a1aa', icon: '📎' }
+  return map[ext] || { bg: 'rgba(100, 116, 139, 0.12)', text: '#64748b', icon: label || '文件' }
 }
 
 function userMessageAttachments(msg) {
@@ -388,7 +390,7 @@ function userMessageAttachments(msg) {
     <div class="chat-main" :class="{ 'sidebar-collapsed': sessionStore.sidebarCollapsed }">
       <!-- 展开按钮 - 在右侧始终可见 -->
       <button v-if="sessionStore.sidebarCollapsed" class="sidebar-toggle collapsed-toggle" @click="sessionStore.toggleSidebar" title="展开侧边栏">
-        →
+        <ChevronRight :size="18" :stroke-width="2" aria-hidden="true" />
       </button>
 
       <!-- 处理模式气泡容器 -->
@@ -409,12 +411,16 @@ function userMessageAttachments(msg) {
 
       <div class="chat-messages" ref="messagesContainer">
         <div v-if="sessionStore.isInitializing" class="welcome-state">
-          <div class="welcome-icon">💬</div>
+          <div class="welcome-icon" aria-hidden="true">
+            <MessagesSquare :size="48" :stroke-width="1.5" />
+          </div>
           <h1 class="welcome-title">加载中...</h1>
         </div>
 
         <div v-else-if="sessionStore.messages.length === 0" class="welcome-state">
-          <div class="welcome-icon">💬</div>
+          <div class="welcome-icon" aria-hidden="true">
+            <MessagesSquare :size="48" :stroke-width="1.5" />
+          </div>
           <h1 class="welcome-title">智能对话</h1>
           <p class="welcome-subtitle">
             通过自然语言与系统交互，完成文档分析，信息提取，内容生成等任务
@@ -426,7 +432,6 @@ function userMessageAttachments(msg) {
               class="quick-action"
               @click="insertPrompt(action)"
             >
-              <span>{{ action.icon }}</span>
               <span>{{ action.text }}</span>
             </button>
           </div>
@@ -438,9 +443,7 @@ function userMessageAttachments(msg) {
           class="message"
           :class="msg.role"
         >
-          <div class="message-avatar">
-            {{ msg.role === 'user' ? '👤' : msg.role === 'system' ? 'ℹ️' : '🤖' }}
-          </div>
+          <div class="message-avatar" :class="'role-' + msg.role" aria-hidden="true" />
           <div class="message-content">
             <!-- 用户消息：带附件时显示文件卡片 -->
             <template v-if="msg.role === 'user' && userMessageAttachments(msg).length > 0">
@@ -455,8 +458,8 @@ function userMessageAttachments(msg) {
                     class="attachment-icon"
                     :style="{ background: getFileStyle(att.file_name).bg, color: getFileStyle(att.file_name).text }"
                   >
-                    <span v-if="att.pending" class="attachment-spinner">⏳</span>
-                    <span v-else>{{ getFileStyle(att.file_name).icon }}</span>
+                    <span v-if="att.pending" class="attachment-spinner" aria-hidden="true" />
+                    <span v-else class="attachment-type-dot" aria-hidden="true" />
                   </div>
                   <div class="attachment-info">
                     <div class="attachment-name" :title="att.file_name">{{ att.file_name }}</div>
@@ -498,7 +501,7 @@ function userMessageAttachments(msg) {
                   <div class="entity-preview-header">
                     <div>
                       <span class="entity-preview-title">
-                        📋 表格结果预览（{{ tb.totalRows }} 行）
+                        表格结果预览（{{ tb.totalRows }} 行）
                       </span>
                       <span v-if="tb.tf.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
                         命中 {{ tb.tf.matched_rows }}/{{ tb.tf.total_rows ?? '—' }} 行
@@ -549,7 +552,7 @@ function userMessageAttachments(msg) {
                 class="entity-preview table-fill-preview table-fill-downloads-only"
               >
                 <div class="entity-preview-header">
-                  <span class="entity-preview-title">📋 生成结果</span>
+                  <span class="entity-preview-title">生成结果</span>
                   <div class="entity-preview-actions">
                     <button
                       v-for="f in getTableFillDownloadFiles(msg)"
@@ -568,7 +571,7 @@ function userMessageAttachments(msg) {
                 <div class="entity-preview table-fill-preview">
                   <div class="entity-preview-header">
                     <div>
-                      <span class="entity-preview-title">📋 混合填表结果预览</span>
+                      <span class="entity-preview-title">混合填表结果预览</span>
                       <span v-if="msg.tableFillingPreview?.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
                         共 {{ msg.tableFillingPreview.matched_rows }} 行
                       </span>
@@ -606,7 +609,7 @@ function userMessageAttachments(msg) {
               <!-- 非混合模式的实体提取结果：表格预览 -->
               <div v-else-if="msg.entitiesData?.length && msg.mixedSource !== 'merged'" class="entity-preview table-fill-preview">
                 <div class="entity-preview-header">
-                  <span class="entity-preview-title">📊 提取结果预览（共 {{ msg.entitiesData.length }} 条）</span>
+                  <span class="entity-preview-title">提取结果预览（共 {{ msg.entitiesData.length }} 条）</span>
                   <div class="entity-preview-actions">
                     <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
                       {{ getFileExt(f.file_name) }} ↓
@@ -637,7 +640,7 @@ function userMessageAttachments(msg) {
               <div v-if="msg.tableFillingPreview && msg.mixedSource !== 'merged'" class="entity-preview table-fill-preview">
                 <div class="entity-preview-header">
                   <div>
-                    <span class="entity-preview-title">📋 表格结果预览（{{ msg.tableFillingPreview.previewData?.length ?? msg.tableFillingPreview.matched_rows ?? 0 }} 行）</span>
+                    <span class="entity-preview-title">表格结果预览（{{ msg.tableFillingPreview.previewData?.length ?? msg.tableFillingPreview.matched_rows ?? 0 }} 行）</span>
                     <span v-if="msg.tableFillingPreview.matched_rows != null" class="table-fill-stats table-fill-stats-inline">
                       命中 {{ msg.tableFillingPreview.matched_rows }}/{{ msg.tableFillingPreview.total_rows ?? '—' }} 行
                     </span>
@@ -669,7 +672,7 @@ function userMessageAttachments(msg) {
                 class="entity-preview table-fill-preview table-fill-downloads-only"
               >
                 <div class="entity-preview-header">
-                  <span class="entity-preview-title">📥 表格数据下载</span>
+                  <span class="entity-preview-title">表格数据下载</span>
                   <div class="entity-preview-actions">
                     <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
                       {{ getFileExt(f.file_name) }} ↓
@@ -683,7 +686,7 @@ function userMessageAttachments(msg) {
                 class="entity-preview table-fill-preview table-fill-downloads-only"
               >
                 <div class="entity-preview-header">
-                  <span class="entity-preview-title">📊 生成结果</span>
+                  <span class="entity-preview-title">生成结果</span>
                   <div class="entity-preview-actions">
                     <button v-for="f in msg.generated_files" :key="f.file_id" class="entity-action-btn" @click="downloadResultFile(f)">
                       {{ getFileExt(f.file_name) }} ↓
@@ -698,10 +701,9 @@ function userMessageAttachments(msg) {
 
         <!-- 上传文件进度 -->
         <div v-if="sessionStore.isUploadingFiles" class="message system">
-          <div class="message-avatar">⏳</div>
+          <div class="message-avatar role-system" aria-hidden="true" />
           <div class="message-content">
             <div class="message-bubble upload-progress">
-              <span class="upload-icon">📤</span>
               <span class="upload-text">{{ sessionStore.uploadProgress || '正在上传文件...' }}</span>
             </div>
           </div>
@@ -709,7 +711,7 @@ function userMessageAttachments(msg) {
 
         <!-- 进度条（实体提取/表格填表） -->
         <div v-if="showProgress && (sessionStore.currentMode === 'entity_extraction' || sessionStore.currentMode === 'table_filling' || sessionStore.currentMode === 'mixed')" class="message assistant">
-          <div class="message-avatar">⚙️</div>
+          <div class="message-avatar role-assistant" aria-hidden="true" />
           <div class="message-content">
             <div class="progress-card">
               <div class="progress-header">
@@ -736,7 +738,9 @@ function userMessageAttachments(msg) {
             @drop="handleDrop"
             @click="triggerFileInput"
           >
-            <span class="file-drop-zone-icon">📎</span>
+            <span class="file-drop-zone-icon" aria-hidden="true">
+              <Paperclip :size="20" :stroke-width="2" />
+            </span>
             <span class="file-drop-zone-text">
               拖拽文件或 <span @click.stop="triggerFileInput">浏览</span>
             </span>
@@ -760,10 +764,10 @@ function userMessageAttachments(msg) {
             </div>
             <div class="file-count-badges">
               <span v-if="fileStore.hasDataFiles" class="file-badge data-badge">
-                📄 {{ fileStore.dataCount }}
+                数据 {{ fileStore.dataCount }}
               </span>
               <span v-if="fileStore.hasTemplateFiles" class="file-badge template-badge">
-                📋 {{ fileStore.templateCount }}
+                模板 {{ fileStore.templateCount }}
               </span>
             </div>
           </div>
@@ -785,7 +789,9 @@ function userMessageAttachments(msg) {
               @click="sendMessage"
               :disabled="!inputText.trim() || sessionStore.isStreaming"
             >
-              <span v-if="!sessionStore.isStreaming">➤</span>
+              <span v-if="!sessionStore.isStreaming" class="send-btn-ico" aria-hidden="true">
+                <Send :size="18" :stroke-width="2.2" />
+              </span>
               <span v-else class="send-spinner"></span>
             </button>
           </div>
@@ -800,19 +806,19 @@ function userMessageAttachments(msg) {
                 ({{ fileStore.dataCount + fileStore.templateCount }})
               </span>
             </span>
-            <span class="panel-toggle" :class="{ collapsed: fileStore.filesPanelCollapsed }">
-              {{ fileStore.filesPanelCollapsed ? '▶' : '▼' }}
+            <span class="panel-toggle" :class="{ collapsed: fileStore.filesPanelCollapsed }" aria-hidden="true">
+              <ChevronRight v-if="fileStore.filesPanelCollapsed" :size="16" :stroke-width="2" />
+              <ChevronDown v-else :size="16" :stroke-width="2" />
             </span>
           </div>
           <div class="panel-content" :class="{ collapsed: fileStore.filesPanelCollapsed }">
             <div v-if="fileStore.dataCount + fileStore.templateCount === 0" class="files-empty">
-              <span class="empty-icon">📂</span>
               <span class="empty-text">暂无文件，上传文件后可选中发送给 AI</span>
             </div>
             <div v-else class="files-row">
               <!-- Data Files -->
               <div v-if="fileStore.hasDataFiles" class="files-group">
-                <span class="files-label">📄 数据文件:</span>
+                <span class="files-label">数据文件:</span>
                 <div class="files-tags">
                   <div
                     v-for="file in fileStore.tempFiles.data"
@@ -826,7 +832,7 @@ function userMessageAttachments(msg) {
                       @change="fileStore.toggleFileSelection(file.id, 'data', $event.target.checked)"
                       class="file-checkbox"
                     />
-                    <span class="file-icon-small">{{ fileStore.getFileIcon(file.file_name) }}</span>
+                    <span class="file-thumb-dot" aria-hidden="true" />
                     <span class="file-tag-name" :title="file.file_name">{{ file.file_name }}</span>
                     <span class="file-size-small">{{ formatFileSize(file.file_size) }}</span>
                     <button class="file-tag-remove" @click.stop="fileStore.removeFile(file.id, 'data')">×</button>
@@ -836,7 +842,7 @@ function userMessageAttachments(msg) {
 
               <!-- Template Files -->
               <div v-if="fileStore.hasTemplateFiles" class="files-group">
-                <span class="files-label">📋 模板文件:</span>
+                <span class="files-label">模板文件:</span>
                 <div class="files-tags">
                   <div
                     v-for="file in fileStore.tempFiles.template"
@@ -850,7 +856,7 @@ function userMessageAttachments(msg) {
                       @change="fileStore.toggleFileSelection(file.id, 'template', $event.target.checked)"
                       class="file-checkbox"
                     />
-                    <span class="file-icon-small">{{ fileStore.getFileIcon(file.file_name) }}</span>
+                    <span class="file-thumb-dot" aria-hidden="true" />
                     <span class="file-tag-name" :title="file.file_name">{{ file.file_name }}</span>
                     <span class="file-size-small">{{ formatFileSize(file.file_size) }}</span>
                     <button class="file-tag-remove" @click.stop="fileStore.removeFile(file.id, 'template')">×</button>
@@ -869,7 +875,7 @@ function userMessageAttachments(msg) {
 /* 进度条 */
 .progress-card {
   background: #f9fafb;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 12px 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -908,14 +914,14 @@ function userMessageAttachments(msg) {
 .progress-bar-container {
   height: 8px;
   background: #e5e7eb;
-  border-radius: 4px;
+  border-radius: 0;
   overflow: hidden;
 }
 
 .progress-bar {
   height: 100%;
   background: linear-gradient(90deg, #10b981, #34d399);
-  border-radius: 4px;
+  border-radius: 0;
   transition: width 0.3s ease;
 }
 
@@ -928,7 +934,7 @@ function userMessageAttachments(msg) {
 .entity-preview {
   margin-top: 12px;
   border: 1px solid #d1d5db;
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
   background: white;
 }
@@ -957,7 +963,7 @@ function userMessageAttachments(msg) {
   background: #3b82f6;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -1083,7 +1089,7 @@ function userMessageAttachments(msg) {
   width: 6px;
   height: 6px;
   background: #6b7280;
-  border-radius: 50%;
+  border-radius: 0;
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 

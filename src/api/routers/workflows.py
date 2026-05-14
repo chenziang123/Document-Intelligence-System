@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from config import SystemConfig, get_config
 from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import FileInfo, FileType, TaskSpec, TaskType
-from core.storage import build_blob_name, upload_file_to_storage
+from core.storage import build_blob_name, upload_file_to_storage, oss_storage_enabled
 from db.auth_repository import resolve_user_from_authorization
 from db.connection import is_database_configured
 from db.workflow_repository import db_load_execution_states, db_save_execution_states, is_db_enabled
@@ -606,11 +606,11 @@ def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig)
         safe_name = f"{file_hash}_{p.name}"
 
         storage_key: Optional[str] = None
-        if config.storage.enabled and config.storage.provider == "azure_blob":
+        if oss_storage_enabled(config):
             from core.storage import build_blob_name, upload_stream_to_storage
             from io import BytesIO
 
-            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.azure_blob_prefix or "workflows")
+            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.object_key_prefix or "workflows")
             storage_key = upload_stream_to_storage(
                 BytesIO(content_bytes),
                 config=config,

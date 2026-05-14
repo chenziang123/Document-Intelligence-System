@@ -34,7 +34,7 @@ export const useLibraryStore = defineStore('library', () => {
       spaces.value = (res?.spaces || []).map(s => ({
         id: s.id,
         name: s.name,
-        icon: s.icon || '📁',
+        icon: s.icon || '',
         description: s.description,
         doc_count: s.doc_count || 0,
         created_at: s.created_at,
@@ -60,7 +60,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function createSpace(name, icon = '📁', description = '') {
+  async function createSpace(name, icon = '', description = '') {
     error.value = null
     try {
       const res = await libraryApi.createSpace({ name, icon, description })

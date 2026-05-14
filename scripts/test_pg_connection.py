@@ -1,4 +1,4 @@
-"""Azure PostgreSQL 连接测试脚本。"""
+"""PostgreSQL 连接测试脚本。"""
 from __future__ import annotations
 
 import sys
