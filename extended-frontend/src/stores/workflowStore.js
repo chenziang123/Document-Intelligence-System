@@ -145,10 +145,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
       icon: '🔄', iconClass: 'ai',
       title: '格式转换', subtitle: '转换节点',
       fields: [
+        { key: '_hint_cf', type: 'static', text: '选择目标格式及转换选项；配置将保存在节点 config 供执行端解析。' },
         { key: 'targetFormat', label: '目标格式', type: 'select',
-          options: [{ value: 'markdown', label: 'Markdown' }, { value: 'html', label: 'HTML' }, { value: 'plaintext', label: '纯文本' }, { value: 'json', label: 'JSON' }] },
-        { key: 'preserveFormatting', label: '保留原格式', type: 'toggle' },
-        { key: 'preserveStructure', label: '保留结构', type: 'toggle' },
+          options: [
+            { value: 'markdown', label: 'Markdown' },
+            { value: 'html', label: 'HTML' },
+            { value: 'plaintext', label: '纯文本' },
+            { value: 'pdf', label: 'PDF' },
+            { value: 'docx', label: 'Word (DOCX)' },
+            { value: 'json', label: 'JSON' }
+          ] },
+        { key: 'conversionOptions', label: '转换选项', type: 'select-multiple',
+          options: [
+            { value: 'keep_layout', label: '尽量保留版面' },
+            { value: 'extract_tables', label: '优先提取表格' },
+            { value: 'embed_images', label: '保留内嵌图片' },
+            { value: 'code_as_text', label: '代码块转纯文本' },
+            { value: 'sanitize_html', label: 'HTML 安全清洗' }
+          ] },
+        { key: 'preserveFormatting', label: '保留原格式标记', type: 'toggle' },
+        { key: 'preserveStructure', label: '保留文档结构', type: 'toggle' },
         { key: 'prompt', label: '自定义转换规则', type: 'textarea' }
       ]
     },
@@ -228,6 +244,132 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'outputFormat', label: '输出格式', type: 'format-selector' },
         { key: 'notifyOnComplete', label: '完成通知', type: 'toggle' }
       ]
+    },
+    // —— 以下为《工作流编排-待办与用例》「节点配置」对齐的专项 schema ——
+    'schema-entity-extraction': {
+      icon: '🏷️', iconClass: 'ai',
+      title: '实体提取', subtitle: '实体与结构化字段',
+      fields: [
+        { key: '_hint_entity', type: 'static', text: '从上游文档中抽取结构化实体；字段名与类型将随工作流保存到 config。' },
+        { key: 'entityFieldList', label: '提取字段列表', type: 'textarea', placeholder: '每行一个字段，或逗号分隔，例：姓名\n日期\n金额' },
+        { key: 'customEntityTypes', label: '自定义实体类型', type: 'textarea', placeholder: '可选：描述需识别的自定义类型，如「合同条款」「项目阶段」' },
+        { key: 'aliasMap', label: '字段别名映射', type: 'textarea', placeholder: '可选：买方=甲方; 卖方=乙方（分号或换行分隔）' },
+        { key: 'prompt', label: '补充抽取规则', type: 'textarea', placeholder: '对模型或规则的额外说明' }
+      ]
+    },
+    'schema-data-process': {
+      icon: '📐', iconClass: 'ai',
+      title: '数据处理', subtitle: '表格类操作',
+      fields: [
+        { key: '_hint_dp', type: 'static', text: '针对表格数据：先选择处理类型，再填写对应参数（与《节点处理》数据处理章节一致）。' },
+        { key: 'processKind', label: '处理类型', type: 'select',
+          options: [
+            { value: 'sort', label: '排序' },
+            { value: 'filter', label: '筛选' },
+            { value: 'aggregate', label: '汇总' },
+            { value: 'dedupe', label: '去重' },
+            { value: 'fill_null', label: '填充空值' },
+            { value: 'computed_column', label: '新增计算列' },
+            { value: 'merge_columns', label: '合并列' },
+            { value: 'split_column', label: '拆分列' }
+          ] },
+        { key: 'sortColumn', label: '排序列（列名）', type: 'input', placeholder: '例如：金额 或 D', dependsOn: { field: 'processKind', value: 'sort' } },
+        { key: 'sortOrder', label: '升降序', type: 'select',
+          options: [{ value: 'asc', label: '升序' }, { value: 'desc', label: '降序' }],
+          dependsOn: { field: 'processKind', value: 'sort' } },
+        { key: 'filterExpr', label: '筛选条件', type: 'textarea', placeholder: '例：列「状态」= 已完成；或简短表达式说明', dependsOn: { field: 'processKind', value: 'filter' } },
+        { key: 'aggregateColumn', label: '汇总列', type: 'input', placeholder: '要汇总的列名', dependsOn: { field: 'processKind', value: 'aggregate' } },
+        { key: 'aggregateOp', label: '汇总方式', type: 'select',
+          options: [
+            { value: 'sum', label: '求和' },
+            { value: 'count', label: '计数' },
+            { value: 'avg', label: '平均值' },
+            { value: 'min', label: '最小' },
+            { value: 'max', label: '最大' }
+          ],
+          dependsOn: { field: 'processKind', value: 'aggregate' } },
+        { key: 'groupByColumns', label: '分组列（可选）', type: 'input', placeholder: '逗号分隔，留空表示全文一条汇总', dependsOn: { field: 'processKind', value: 'aggregate' } },
+        { key: 'dedupeColumns', label: '去重依据列', type: 'input', placeholder: '逗号分隔列名，留空表示整行去重', dependsOn: { field: 'processKind', value: 'dedupe' } },
+        { key: 'fillColumns', label: '填充列', type: 'input', placeholder: '要填充的列，逗号分隔', dependsOn: { field: 'processKind', value: 'fill_null' } },
+        { key: 'fillValue', label: '填充值', type: 'input', placeholder: '例如：0 或 N/A', dependsOn: { field: 'processKind', value: 'fill_null' } },
+        { key: 'computedFormula', label: '计算表达式', type: 'textarea', placeholder: '例：=[金额]*[数量] 或列运算说明', dependsOn: { field: 'processKind', value: 'computed_column' } },
+        { key: 'computedColumnName', label: '新列名', type: 'input', placeholder: '结果写入的列标题', dependsOn: { field: 'processKind', value: 'computed_column' } },
+        { key: 'mergeSourceColumns', label: '待合并列', type: 'input', placeholder: '逗号分隔', dependsOn: { field: 'processKind', value: 'merge_columns' } },
+        { key: 'mergeSeparator', label: '连接符', type: 'input', placeholder: '默认空格', dependsOn: { field: 'processKind', value: 'merge_columns' } },
+        { key: 'mergeTargetColumn', label: '目标列名', type: 'input', dependsOn: { field: 'processKind', value: 'merge_columns' } },
+        { key: 'splitSourceColumn', label: '待拆分列', type: 'input', dependsOn: { field: 'processKind', value: 'split_column' } },
+        { key: 'splitDelimiter', label: '分隔符', type: 'input', placeholder: '如：,、;、|', dependsOn: { field: 'processKind', value: 'split_column' } },
+        { key: 'splitIntoColumns', label: '拆成列名', type: 'input', placeholder: '逗号分隔多列标题', dependsOn: { field: 'processKind', value: 'split_column' } },
+        { key: 'prompt', label: '补充说明', type: 'textarea' }
+      ]
+    },
+    'schema-data-clean': {
+      icon: '🧼', iconClass: 'ai',
+      title: '数据清洗', subtitle: '规则与规范化',
+      fields: [
+        { key: '_hint_dc', type: 'static', text: '可多选下方规则；实际清洗与预览在执行阶段由服务端/执行引擎应用（可先保存配置再联调）。' },
+        { key: 'cleanRules', label: '清洗规则', type: 'select-multiple',
+          options: [
+            { value: 'trim_spaces', label: '去除首尾空格' },
+            { value: 'normalize_date', label: '统一日期格式' },
+            { value: 'normalize_number', label: '统一数字格式' },
+            { value: 'handle_outliers', label: '处理异常值' },
+            { value: 'expand_merged_cells', label: '合并单元格展开' },
+            { value: 'fix_format_errors', label: '修正格式错误' }
+          ] },
+        { key: 'dateFormatPattern', label: '目标日期格式', type: 'input', placeholder: '例：YYYY-MM-DD（勾选「统一日期格式」后可填）',
+          dependsOn: { field: 'cleanRules', arrayIncludes: 'normalize_date' } },
+        { key: 'numberDecimalPlaces', label: '小数位数', type: 'input', placeholder: '可选，如：2',
+          dependsOn: { field: 'cleanRules', arrayIncludes: 'normalize_number' } },
+        { key: 'prompt', label: '补充规则说明', type: 'textarea' },
+        { key: '_preview_note', type: 'static', text: '「预览清洗结果」需执行流水线支持后由后端推送或轮询刷新；此处仅保存规则配置。' }
+      ]
+    },
+    'schema-table-extract': {
+      icon: '📑', iconClass: 'ai',
+      title: '表格提取', subtitle: '从文档中抽取表格',
+      fields: [
+        { key: 'tableStrategy', label: '提取策略', type: 'select',
+          options: [
+            { value: 'first', label: '第一个表格' },
+            { value: 'all', label: '全部表格' },
+            { value: 'by_index', label: '按序号' }
+          ] },
+        { key: 'tableIndex', label: '表格序号（从 1 开始）', type: 'input', placeholder: '当策略为「按序号」',
+          dependsOn: { field: 'tableStrategy', value: 'by_index' } },
+        { key: 'hasHeader', label: '首行为表头', type: 'toggle' },
+        { key: 'prompt', label: '补充说明', type: 'textarea' }
+      ]
+    },
+    'schema-data-rollup': {
+      icon: '📈', iconClass: 'ai',
+      title: '数据汇总', subtitle: '统计汇总',
+      fields: [
+        { key: 'rollupDims', label: '分类维度（列）', type: 'textarea', placeholder: '逗号或换行分隔' },
+        { key: 'rollupMetrics', label: '指标与聚合', type: 'textarea', placeholder: '例：销售额:sum; 数量:count' },
+        { key: 'prompt', label: '补充说明', type: 'textarea' }
+      ]
+    },
+    'schema-save-excel': {
+      icon: '📗', iconClass: 'output',
+      title: '保存 Excel', subtitle: '输出节点',
+      fields: [
+        { key: 'savePath', label: '相对路径或文件名前缀', type: 'input', placeholder: '可选' },
+        { key: 'sheetName', label: '工作表名称', type: 'input', placeholder: '默认 Sheet1' },
+        { key: 'prompt', label: '备注', type: 'textarea' }
+      ]
+    },
+    'schema-save-text': {
+      icon: '📝', iconClass: 'output',
+      title: '保存文本', subtitle: '输出节点',
+      fields: [
+        { key: 'outputEncoding', label: '编码', type: 'select',
+          options: [{ value: 'utf-8', label: 'UTF-8' }, { value: 'gbk', label: 'GBK' }] },
+        { key: 'lineEnding', label: '换行符', type: 'select',
+          options: [{ value: 'lf', label: 'LF (Unix)' }, { value: 'crlf', label: 'CRLF (Windows)' }] },
+        { key: 'savePath', label: '文件名或前缀', type: 'input' },
+        { key: 'prompt', label: '备注', type: 'textarea' }
+      ]
     }
   })
 
@@ -280,6 +422,31 @@ export const useWorkflowStore = defineStore('workflow', () => {
         {
           icon: '📊', name: '数据抽取', type: 'ai', title: '数据抽取', body: '从文档中提取结构化数据',
           schemaKey: 'schema-extract-data',
+          schema: null
+        },
+        {
+          icon: '🏷️', name: '实体提取', type: 'ai', title: '实体提取', body: '按字段与自定义实体类型抽取结构化信息',
+          schemaKey: 'schema-entity-extraction',
+          schema: null
+        },
+        {
+          icon: '📐', name: '数据处理', type: 'ai', title: '数据处理', body: '表格排序、筛选、汇总、去重与列变换',
+          schemaKey: 'schema-data-process',
+          schema: null
+        },
+        {
+          icon: '🧼', name: '数据清洗', type: 'ai', title: '数据清洗', body: '去空格、格式统一与脏数据规范化',
+          schemaKey: 'schema-data-clean',
+          schema: null
+        },
+        {
+          icon: '📑', name: '表格提取', type: 'ai', title: '表格提取', body: '从 PDF/Word 等文档中提取表格结构',
+          schemaKey: 'schema-table-extract',
+          schema: null
+        },
+        {
+          icon: '📈', name: '数据汇总', type: 'ai', title: '数据汇总', body: '按维度统计汇总指标',
+          schemaKey: 'schema-data-rollup',
           schema: null
         },
         {
@@ -346,6 +513,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
           icon: '📁', name: '输出文件', type: 'output', title: '输出文件', body: '保存结果到文档库或直接下载',
           schemaKey: 'schema-library-output',
           schema: null
+        },
+        {
+          icon: '📗', name: '保存 Excel', type: 'output', title: '保存 Excel', body: '将表格结果保存为 Excel 文件',
+          schemaKey: 'schema-save-excel',
+          schema: null
+        },
+        {
+          icon: '📝', name: '保存文本', type: 'output', title: '保存文本', body: '将文本结果保存为 txt / md',
+          schemaKey: 'schema-save-text',
+          schema: null
         }
       ]
     }
@@ -357,6 +534,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const executionProgress = ref(0)
   const executionLogs = ref([])
   const outputFiles = ref([])
+  const nodeProgress = ref([])
+  const currentNodeId = ref('')
+  const currentNodeName = ref('')
 
   // ==================== 计算属性 ====================
 
@@ -591,6 +771,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
+  /** 执行顺序前移一格（在 pipeline 中先执行一步） */
+  function moveNodeEarlier(nodeId) {
+    const idx = canvasNodes.value.findIndex(n => n.id === nodeId)
+    if (idx <= 0) return
+    const list = canvasNodes.value
+    const item = list[idx]
+    list.splice(idx, 1)
+    list.splice(idx - 1, 0, item)
+  }
+
+  /** 执行顺序后移一格（在 pipeline 中后执行一步） */
+  function moveNodeLater(nodeId) {
+    const idx = canvasNodes.value.findIndex(n => n.id === nodeId)
+    if (idx < 0 || idx >= canvasNodes.value.length - 1) return
+    const list = canvasNodes.value
+    const item = list[idx]
+    list.splice(idx, 1)
+    list.splice(idx + 1, 0, item)
+  }
+
   function updateNodeConfig(nodeId, key, value) {
     const node = canvasNodes.value.find(n => n.id === nodeId)
     if (node) {
@@ -615,6 +815,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     const lastNode = canvasNodes.value[canvasNodes.value.length - 1]
     const x = lastNode ? lastNode.x + 260 : 30
     const y = lastNode ? lastNode.y : 160
+    const configValues = _defaultConfigForSchemaKey(toolboxItem.schemaKey)
     const newNode = {
       id,
       type: toolboxItem.type,
@@ -623,13 +824,69 @@ export const useWorkflowStore = defineStore('workflow', () => {
       body: toolboxItem.body,
       x,
       y,
-      configValues: {},
+      configValues,
       schemaKey: toolboxItem.schemaKey,
       schema
     }
     canvasNodes.value.push(newNode)
     selectedNodeId.value = id
     return id
+  }
+
+  /** 在画布指定坐标放置节点（拖拽落点）；坐标相对于 canvas-inner 左上角 */
+  function addNodeAt(toolboxItem, x, y) {
+    const schema = nodeSchemas.value[toolboxItem.schemaKey] || null
+    const id = 'n_' + Date.now()
+    const INNER = 3000
+    const NODE_PLACEHOLDER_W = 216
+    const NODE_PLACEHOLDER_H = 100
+    const cx = Math.round(Math.min(Math.max(8, x), INNER - NODE_PLACEHOLDER_W - 8))
+    const cy = Math.round(Math.min(Math.max(8, y), INNER - NODE_PLACEHOLDER_H - 8))
+    const configValues = _defaultConfigForSchemaKey(toolboxItem.schemaKey)
+    const newNode = {
+      id,
+      type: toolboxItem.type,
+      icon: toolboxItem.icon,
+      title: toolboxItem.title,
+      body: toolboxItem.body,
+      x: cx,
+      y: cy,
+      configValues,
+      schemaKey: toolboxItem.schemaKey,
+      schema
+    }
+    // 按画布水平位置插入，使连线顺序与从左到右的摆放基本一致
+    const dropCenterX = cx + NODE_PLACEHOLDER_W / 2
+    let insertAt = canvasNodes.value.length
+    for (let i = 0; i < canvasNodes.value.length; i++) {
+      const n = canvasNodes.value[i]
+      const center = n.x + NODE_PLACEHOLDER_W / 2
+      if (dropCenterX < center) {
+        insertAt = i
+        break
+      }
+    }
+    canvasNodes.value.splice(insertAt, 0, newNode)
+    selectedNodeId.value = id
+    return id
+  }
+
+  /** 新节点拖入画布时的默认配置，避免「处理类型」等依赖字段全空导致面板无内容 */
+  function _defaultConfigForSchemaKey(schemaKey) {
+    switch (schemaKey) {
+      case 'schema-data-process':
+        return { processKind: 'sort', sortOrder: 'asc' }
+      case 'schema-data-clean':
+        return { cleanRules: ['trim_spaces'] }
+      case 'schema-table-extract':
+        return { tableStrategy: 'first', hasHeader: true }
+      case 'schema-save-text':
+        return { outputEncoding: 'utf-8', lineEnding: 'lf' }
+      case 'schema-convert-format':
+        return { targetFormat: 'markdown', conversionOptions: [] }
+      default:
+        return {}
+    }
   }
 
   function deleteNode(nodeId) {
@@ -729,6 +986,19 @@ export const useWorkflowStore = defineStore('workflow', () => {
     isExecuting.value = true
     executionProgress.value = 0
     executionLogs.value = []
+    outputFiles.value = []
+    nodeProgress.value = canvasNodes.value.map((n, idx) => ({
+      id: n.id,
+      title: n.title,
+      type: n.type,
+      schemaKey: n.schemaKey,
+      index: idx + 1,
+      status: 'pending',
+      progress: 0,
+      message: ''
+    }))
+    currentNodeId.value = ''
+    currentNodeName.value = ''
 
     try {
       // 将本地文件转为 base64 发送（逐字节避免栈溢出）
@@ -782,6 +1052,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
       try {
         const res = await workflowApi.getExecutionStatus(executionId)
         const status = res?.status
+        nodeProgress.value = Array.isArray(res?.node_progress) ? res.node_progress : nodeProgress.value
+        currentNodeId.value = res?.current_node_id || ''
+        currentNodeName.value = res?.current_node_name || ''
         if (status === 'completed') {
           executionProgress.value = 100
           // 追加 output_files
@@ -949,6 +1222,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
     executionProgress,
     executionLogs,
     outputFiles,
+    nodeProgress,
+    currentNodeId,
+    currentNodeName,
     // 计算属性
     currentWorkflow,
     customWorkflows,
@@ -971,8 +1247,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
     // 节点操作
     selectNode,
     updateNodePosition,
+    moveNodeEarlier,
+    moveNodeLater,
     updateNodeConfig,
     addNode,
+    addNodeAt,
     deleteNode,
     clearCanvas,
     getSchemaByKey,

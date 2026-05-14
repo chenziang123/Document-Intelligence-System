@@ -22,7 +22,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -32,6 +32,7 @@ from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import FileInfo, FileType, TaskSpec, TaskType
 from core.storage import build_blob_name, upload_file_to_storage
 from db.auth_repository import resolve_user_from_authorization
+from db.connection import is_database_configured
 from db.workflow_repository import db_load_execution_states, db_save_execution_states, is_db_enabled
 from db.session_repository import add_session_file, get_session_by_id
 from utils.logger import get_logger
@@ -121,6 +122,11 @@ class ExecutionResponse(BaseModel):
     current_file_index: int = 0
     total_files: int = 0
     current_file_name: str = ""
+    current_node_id: str = ""
+    current_node_name: str = ""
+    current_node_index: int = 0
+    total_nodes: int = 0
+    node_progress: List[Dict[str, Any]] = Field(default_factory=list)
     logs: List[Dict[str, str]] = Field(default_factory=list)
     output_files: List[Dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
@@ -138,11 +144,25 @@ class TemplateResponse(BaseModel):
 
 
 def _get_output_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
-    """从节点列表中提取输出节点配置。"""
+    """从节点列表中提取输出节点配置。优先「输出文件/文档库」节点，否则用第一个输出节点。"""
+    first_output: Dict[str, Any] = {}
     for node in nodes:
-        if node.type == "output":
-            return node.configValues or {}
-    return {}
+        if node.type != "output":
+            continue
+        cv = dict(node.configValues or {})
+        cv["_schemaKey"] = node.schemaKey
+        if node.schemaKey == "schema-save-excel":
+            cv.setdefault("outputFormat", "xlsx")
+        elif node.schemaKey == "schema-save-text":
+            cv.setdefault("outputFormat", "txt")
+        if not first_output:
+            first_output = cv
+        # 画布上可能存在多个输出型节点时的歧义处理
+        if node.schemaKey == "schema-library-output":
+            return cv
+        if node.schemaKey in {"schema-save-excel", "schema-save-text"}:
+            return cv
+    return first_output
 
 
 def _get_input_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
@@ -168,6 +188,78 @@ def _get_processing_nodes(nodes: List[WorkflowNode]) -> List[WorkflowNode]:
         if node.type not in ("input", "output"):
             processing.append(node)
     return processing
+
+
+def _build_node_progress(nodes: List[WorkflowNode]) -> List[Dict[str, Any]]:
+    progress_items: List[Dict[str, Any]] = []
+    for idx, node in enumerate(nodes, start=1):
+        progress_items.append(
+            {
+                "id": node.id,
+                "title": node.title,
+                "type": node.type,
+                "schemaKey": node.schemaKey,
+                "index": idx,
+                "status": "pending",
+                "progress": 0,
+                "message": "",
+            }
+        )
+    return progress_items
+
+
+def _validate_execute_request(request: ExecuteRequest) -> List[str]:
+    errors: List[str] = []
+    for idx, node in enumerate(request.nodes, start=1):
+        schema_key = str(node.schemaKey or "").strip()
+        cv = node.configValues or {}
+        title = node.title or schema_key or f"第{idx}个节点"
+
+        if schema_key == "schema-data-process":
+            process_kind = str(cv.get("processKind") or "").strip()
+            if process_kind not in {"sort", "filter", "aggregate", "dedupe", "fill_null", "computed_column", "merge_columns", "split_column"}:
+                errors.append(f"{title}：processKind配置无效")
+            required_by_kind = {
+                "sort": ["sortColumn"],
+                "filter": ["filterExpr"],
+                "aggregate": ["aggregateColumn", "aggregateOp"],
+                "fill_null": ["fillColumns"],
+                "computed_column": ["computedColumnName", "computedFormula"],
+                "merge_columns": ["mergeSourceColumns", "mergeTargetColumn"],
+                "split_column": ["splitSourceColumn", "splitIntoColumns"],
+            }
+            missing = [key for key in required_by_kind.get(process_kind, []) if not str(cv.get(key) or "").strip()]
+            if missing:
+                errors.append(f"{title}：缺少配置 {', '.join(missing)}")
+        elif schema_key == "schema-data-clean":
+            rules = cv.get("cleanRules")
+            if not rules:
+                errors.append(f"{title}：cleanRules不能为空")
+        elif schema_key == "schema-table-extract":
+            strategy = str(cv.get("tableStrategy") or "first").strip()
+            if strategy not in {"first", "all", "by_index"}:
+                errors.append(f"{title}：tableStrategy配置无效")
+            if strategy == "by_index":
+                try:
+                    if int(cv.get("tableIndex")) <= 0:
+                        raise ValueError()
+                except Exception:
+                    errors.append(f"{title}：tableIndex必须是从1开始的正整数")
+        elif schema_key == "schema-save-excel":
+            sheet_name = str(cv.get("sheetName") or "Sheet1")
+            if len(sheet_name) > 31:
+                errors.append(f"{title}：sheetName不能超过31个字符")
+            if any(ch in sheet_name for ch in '[]:*?/\\'):
+                errors.append(f"{title}：sheetName不能包含 []:*?/\\")
+        elif schema_key == "schema-save-text":
+            encoding = str(cv.get("outputEncoding") or "utf-8").lower()
+            if encoding not in {"utf-8", "gbk"}:
+                errors.append(f"{title}：outputEncoding仅支持utf-8或gbk")
+            line_ending = str(cv.get("lineEnding") or "lf").lower()
+            if line_ending not in {"lf", "crlf"}:
+                errors.append(f"{title}：lineEnding仅支持lf或crlf")
+
+    return errors
 
 
 # 语言 code → 人类可读名称映射
@@ -245,11 +337,33 @@ def _detect_file_type(name: str) -> FileType:
 def _make_progress_callback(execution_id: str):
     """生成一个向执行状态写入进度日志的回调。"""
 
-    def callback(progress: int, total: int, message: str):
+    def callback(progress: int, total: int, message: str, **kwargs):
         if execution_id not in _EXECUTION_STATES:
             return
         state = _EXECUTION_STATES[execution_id]
-        state["progress"] = max(state["progress"], int(progress / max(total, 1) * 100))
+        file_index = int(state.get("current_file_index") or 1)
+        total_files = max(int(state.get("total_files") or 1), 1)
+        node_ratio = max(0.0, min(float(progress) / max(total, 1), 1.0))
+        overall = int(((file_index - 1) + node_ratio) / total_files * 100)
+        state["progress"] = max(0, min(overall, 99 if state.get("status") == "running" else 100))
+
+        node_id = str(kwargs.get("node_id") or "")
+        node_title = str(kwargs.get("node_title") or "")
+        node_index = int(kwargs.get("node_index") or progress or 0)
+        node_status = str(kwargs.get("node_status") or "running")
+        node_item_progress = int(kwargs.get("node_progress") if kwargs.get("node_progress") is not None else (100 if node_status == "completed" else 50))
+
+        if node_id or node_title:
+            state["current_node_id"] = node_id
+            state["current_node_name"] = node_title
+            state["current_node_index"] = node_index
+            state["total_nodes"] = max(int(state.get("total_nodes") or total or 0), int(total or 0))
+            for item in state.get("node_progress", []):
+                if (node_id and item.get("id") == node_id) or (not node_id and item.get("title") == node_title):
+                    item["status"] = node_status
+                    item["progress"] = max(0, min(node_item_progress, 100))
+                    item["message"] = message
+                    break
         state["logs"].append({"type": "info", "message": message})
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         _persist_execution_states()
@@ -277,6 +391,23 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
 
         translation_config = _get_translation_config(params.nodes)
         target_language = _normalize_lang(translation_config.get("targetLanguage", "中文"))
+
+        if str(output_mode).lower() == "library" and not target_space_id:
+            state["logs"].append(
+                {
+                    "type": "warn",
+                    "message": "输出模式为「保存到文档库」，但未选择目标文档库；文件只会生成在工作流输出目录，不会出现在文档库列表。请在输出节点选择目标库后重试。",
+                }
+            )
+        elif str(output_mode).lower() == "library" and not (
+            config.database.enabled and is_database_configured(config)
+        ):
+            state["logs"].append(
+                {
+                    "type": "warn",
+                    "message": "文档库入库需要 PostgreSQL：请在 .env 中启用 DB_ENABLED 并配置 DATABASE_URL（或其它 DB_*）。当前数据库未就绪，仅能下载/查看本地输出路径。",
+                }
+            )
 
         # ===== 保存本地文件到磁盘 =====
         saved_local_files: List[Dict[str, Any]] = []  # [{path, name, size}]
@@ -354,6 +485,11 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
             state["current_file_index"] = idx + 1
             state["current_file_name"] = file_info.name
             state["progress"] = int(idx / len(source_files) * 100)
+            state["current_node_id"] = ""
+            state["current_node_name"] = ""
+            state["current_node_index"] = 0
+            state["total_nodes"] = len(params.nodes)
+            state["node_progress"] = _build_node_progress(params.nodes)
             state["logs"].append(
                 {"type": "info", "message": f"[{idx + 1}/{len(source_files)}] 正在处理: {file_info.name}"}
             )
@@ -378,6 +514,9 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
                         "namingRule": naming_rule,
                         "targetLanguage": target_language,
                         "savePath": output_config.get("savePath"),
+                        "sheetName": output_config.get("sheetName"),
+                        "outputEncoding": output_config.get("outputEncoding"),
+                        "lineEnding": output_config.get("lineEnding"),
                         "notifyOnComplete": output_config.get("notifyOnComplete"),
                     },
                     "input_config": input_config,
@@ -405,9 +544,14 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
             _persist_execution_states(config)
 
-            if output_mode == "library" and target_space_id and out_path:
-                _save_output_to_library(str(out_path), target_space_id, config)
-                state["logs"].append({"type": "done", "message": f"  已保存到文档库: {out_name}"})
+            if str(output_mode).lower() == "library" and out_path:
+                if target_space_id:
+                    ok_lib, lib_msg = _save_output_to_library(str(out_path), str(target_space_id), config)
+                    if ok_lib:
+                        state["logs"].append({"type": "done", "message": f"  已保存到文档库: {out_name}"})
+                    else:
+                        state["logs"].append({"type": "error", "message": f"  文档库入库失败: {lib_msg}"})
+                # 未选目标库时在任务开头已有 warn，此处不再重复
 
         # ===== 完成 =====
         state["progress"] = 100
@@ -438,48 +582,61 @@ async def _run_execution(execution_id: str, params: ExecuteRequest):
         _persist_execution_states(config)
 
 
-def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig):
-    """将输出文件保存到文档库。"""
+def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig) -> Tuple[bool, str]:
+    """将输出文件保存到文档库（写存储 + PostgreSQL 登记）。返回 (是否成功, 错误说明)。"""
+    if not (config.database.enabled and is_database_configured(config)):
+        return False, "数据库未启用或未配置，无法写入 library_documents"
+
     try:
-        from db.library_repository import add_library_doc
-        from pathlib import Path
+        from db.library_repository import add_library_doc, get_library_space_by_id
         import hashlib
 
         p = Path(file_path)
+        if not p.is_file():
+            return False, f"输出文件不存在: {file_path}"
+
+        # 与手动上传一致：登记为空间所属用户，否则已登录用户列表会带 user_id 条件，看不到 user_id 为空的记录
+        space_row = get_library_space_by_id(space_id, config=config, user_id=None)
+        owner_user_id = space_row.user_id if space_row else None
+
         with open(p, "rb") as f:
             content_bytes = f.read()
         file_size = len(content_bytes)
         file_hash = hashlib.md5(content_bytes).hexdigest()
         safe_name = f"{file_hash}_{p.name}"
 
-        storage_key = None
+        storage_key: Optional[str] = None
         if config.storage.enabled and config.storage.provider == "azure_blob":
             from core.storage import build_blob_name, upload_stream_to_storage
             from io import BytesIO
-            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.azure_blob_prefix)
+
+            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.azure_blob_prefix or "workflows")
             storage_key = upload_stream_to_storage(
-                BytesIO(content_bytes), config=config, blob_name=blob_name,
+                BytesIO(content_bytes),
+                config=config,
+                blob_name=blob_name,
                 content_type="application/octet-stream",
             )
         else:
-            upload_dir = Path("workspace/library") / space_id
+            upload_dir = Path(config.work_dir) / "library" / space_id
             upload_dir.mkdir(parents=True, exist_ok=True)
             storage_key = str(upload_dir / safe_name)
-            with open(storage_key, "wb") as f:
-                f.write(content_bytes)
+            Path(storage_key).write_bytes(content_bytes)
 
         add_library_doc(
             space_id=space_id,
             file_name=p.name,
             file_size=file_size,
             config=config,
-            user_id=None,
+            user_id=owner_user_id,
             mime_type="application/octet-stream",
             storage_key=storage_key,
             blob_url=storage_key,
         )
+        return True, ""
     except Exception as e:
         logger.warning(f"保存到文档库失败: {e}")
+        return False, str(e)
 
 
 # ==================== API 端点 ====================
@@ -493,6 +650,10 @@ async def execute_workflow(request: ExecuteRequest, background_tasks: Background
     启动工作流执行（逐文件处理）。
     立即返回 execution_id，前端通过 GET /executions/{id} 轮询进度。
     """
+    validation_errors = _validate_execute_request(request)
+    if validation_errors:
+        raise HTTPException(status_code=400, detail="；".join(validation_errors))
+
     execution_id = uuid.uuid4().hex
 
     _EXECUTION_STATES[execution_id] = {
@@ -501,6 +662,11 @@ async def execute_workflow(request: ExecuteRequest, background_tasks: Background
         "current_file_index": 0,
         "total_files": 0,
         "current_file_name": "",
+        "current_node_id": "",
+        "current_node_name": "",
+        "current_node_index": 0,
+        "total_nodes": len(request.nodes),
+        "node_progress": _build_node_progress(request.nodes),
         "logs": [{"type": "info", "message": "任务已启动，正在初始化..."}],
         "output_files": [],
         "error": None,
@@ -651,6 +817,11 @@ async def get_execution_status(execution_id: str):
         current_file_index=state["current_file_index"],
         total_files=state["total_files"],
         current_file_name=state["current_file_name"],
+        current_node_id=state.get("current_node_id", ""),
+        current_node_name=state.get("current_node_name", ""),
+        current_node_index=state.get("current_node_index", 0),
+        total_nodes=state.get("total_nodes", 0),
+        node_progress=state.get("node_progress", []),
         logs=state["logs"],
         output_files=state["output_files"],
         error=state["error"],
@@ -693,6 +864,7 @@ async def list_output_formats():
         {"code": "pdf", "name": "PDF"},
         {"code": "md", "name": "Markdown"},
         {"code": "txt", "name": "纯文本"},
+        {"code": "xlsx", "name": "Excel"},
     ]
 
 

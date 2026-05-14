@@ -4,7 +4,9 @@
 文档解析由各Agent自行处理（使用外部库如python-docx, pdfplumber等）
 """
 from typing import Optional, List, Any, Dict
+import csv
 import importlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -138,7 +140,9 @@ class TaskExecutor:
         execution_id = str(task_spec.parameters.get("execution_id") or "workflow")
 
         output_format = str(output_config.get("outputFormat") or "md").lower()
-        if output_format not in ("md", "txt", "pdf"):
+        if output_format in ("excel", "xls"):
+            output_format = "xlsx"
+        if output_format not in ("md", "txt", "pdf", "xlsx"):
             output_format = "md"
 
         naming_rule = str(output_config.get("namingRule") or "{original_name}_out")
@@ -181,10 +185,28 @@ class TaskExecutor:
         if not content:
             return {"success": False, "message": f"无法读取文件内容: {source.name}"}
 
-        processing_nodes = [n for n in workflow_nodes if str(n.get("type", "")).lower() not in ("input", "output")]
+        indexed_nodes = list(enumerate(workflow_nodes, 1))
+        total_nodes = max(len(workflow_nodes), 1)
+        input_nodes = [(i, n) for i, n in indexed_nodes if str(n.get("type", "")).lower() == "input"]
+        processing_nodes = [(i, n) for i, n in indexed_nodes if str(n.get("type", "")).lower() not in ("input", "output")]
+        output_nodes = [(i, n) for i, n in indexed_nodes if str(n.get("type", "")).lower() == "output"]
+
+        for original_index, node_dict in input_nodes:
+            if progress_callback:
+                progress_callback(
+                    original_index,
+                    total_nodes,
+                    f"输入节点完成: {node_dict.get('title') or node_dict.get('type')}",
+                    node_id=str(node_dict.get("id", "")),
+                    node_title=str(node_dict.get("title", "") or node_dict.get("type", "")),
+                    node_index=original_index,
+                    node_status="completed",
+                    node_progress=100,
+                )
+
         result_content = content
         from api.routers.workflows_processors import _process_node
-        for idx, node_dict in enumerate(processing_nodes, 1):
+        for original_index, node_dict in processing_nodes:
             node = SimpleNamespace(
                 type=node_dict.get("type", ""),
                 title=node_dict.get("title", ""),
@@ -192,18 +214,114 @@ class TaskExecutor:
                 configValues=node_dict.get("configValues", {}) or {},
             )
             if progress_callback:
-                progress_callback(idx, max(len(processing_nodes), 1), f"处理节点: {node.title or node.type}")
-            result_content = _process_node(result_content, source.name, node, self.config, {})
+                progress_callback(
+                    original_index,
+                    total_nodes,
+                    f"处理节点开始: {node.title or node.type}",
+                    node_id=str(node_dict.get("id", "")),
+                    node_title=str(node.title or node.type),
+                    node_index=original_index,
+                    node_status="running",
+                    node_progress=30,
+                )
+            try:
+                result_content = _process_node(result_content, source.name, node, self.config, {})
+            except Exception as exc:
+                if progress_callback:
+                    progress_callback(
+                        original_index,
+                        total_nodes,
+                        f"处理节点失败: {node.title or node.type}（{exc}）",
+                        node_id=str(node_dict.get("id", "")),
+                        node_title=str(node.title or node.type),
+                        node_index=original_index,
+                        node_status="failed",
+                        node_progress=100,
+                    )
+                return {"success": False, "message": f"节点处理失败: {node.title or node.type}（{exc}）"}
             if not result_content:
+                if progress_callback:
+                    progress_callback(
+                        original_index,
+                        total_nodes,
+                        f"处理节点失败: {node.title or node.type}",
+                        node_id=str(node_dict.get("id", "")),
+                        node_title=str(node.title or node.type),
+                        node_index=original_index,
+                        node_status="failed",
+                        node_progress=100,
+                    )
                 return {"success": False, "message": f"节点处理结果为空: {node.title or node.type}"}
+            if progress_callback:
+                progress_callback(
+                    original_index,
+                    total_nodes,
+                    f"处理节点完成: {node.title or node.type}",
+                    node_id=str(node_dict.get("id", "")),
+                    node_title=str(node.title or node.type),
+                    node_index=original_index,
+                    node_status="completed",
+                    node_progress=100,
+                )
 
-        if output_format == "pdf":
-            from utils.pdf_generator import text_to_pdf
-            text_to_pdf(result_content, str(out_path), title=out_name)
-            mime_type = "application/pdf"
-        else:
-            out_path.write_text(result_content, encoding="utf-8")
-            mime_type = "text/markdown; charset=utf-8" if output_format == "md" else "text/plain; charset=utf-8"
+        for original_index, node_dict in output_nodes:
+            if progress_callback:
+                progress_callback(
+                    original_index,
+                    total_nodes,
+                    f"输出节点开始: {node_dict.get('title') or node_dict.get('type')}",
+                    node_id=str(node_dict.get("id", "")),
+                    node_title=str(node_dict.get("title", "") or node_dict.get("type", "")),
+                    node_index=original_index,
+                    node_status="running",
+                    node_progress=30,
+                )
+
+        try:
+            if output_format == "pdf":
+                from utils.pdf_generator import text_to_pdf
+                text_to_pdf(result_content, str(out_path), title=out_name)
+                mime_type = "application/pdf"
+            elif output_format == "xlsx":
+                self._write_xlsx_output(result_content, out_path, str(output_config.get("sheetName") or "Sheet1"))
+                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                encoding = str(output_config.get("outputEncoding") or "utf-8").lower()
+                if encoding not in {"utf-8", "gbk"}:
+                    encoding = "utf-8"
+                line_ending = "\r\n" if str(output_config.get("lineEnding") or "").lower() == "crlf" else "\n"
+                text_output = result_content.replace("\r\n", "\n").replace("\r", "\n")
+                if line_ending != "\n":
+                    text_output = text_output.replace("\n", line_ending)
+                out_path.write_text(text_output, encoding=encoding)
+                mime_type = "text/markdown; charset=utf-8" if output_format == "md" else "text/plain; charset=utf-8"
+        except Exception as exc:
+            for original_index, node_dict in output_nodes:
+                if progress_callback:
+                    progress_callback(
+                        original_index,
+                        total_nodes,
+                        f"输出节点失败: {node_dict.get('title') or node_dict.get('type')}（{exc}）",
+                        node_id=str(node_dict.get("id", "")),
+                        node_title=str(node_dict.get("title", "") or node_dict.get("type", "")),
+                        node_index=original_index,
+                        node_status="failed",
+                        node_progress=100,
+                    )
+            return {"success": False, "message": f"输出文件写入失败: {exc}"}
+
+        for original_index, node_dict in output_nodes:
+            if progress_callback:
+                progress_callback(
+                    original_index,
+                    total_nodes,
+                    f"输出节点完成: {node_dict.get('title') or node_dict.get('type')}",
+                    node_id=str(node_dict.get("id", "")),
+                    node_title=str(node_dict.get("title", "") or node_dict.get("type", "")),
+                    node_index=original_index,
+                    node_status="completed",
+                    node_progress=100,
+                )
 
         blob_name = None
         if self.config.storage.enabled and self.config.storage.provider == "azure_blob":
@@ -229,6 +347,76 @@ class TaskExecutor:
                 "source": source.name,
             },
         }
+
+    def _write_xlsx_output(self, content: str, out_path: Path, sheet_name: str = "Sheet1") -> None:
+        """将文本、Markdown表格、JSON数组等轻量转换为Excel。"""
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        safe_sheet_name = "".join(ch for ch in (sheet_name or "Sheet1") if ch not in r'[]:*?/\\')[:31] or "Sheet1"
+        ws.title = safe_sheet_name
+
+        rows = self._content_to_rows(content)
+        if not rows:
+            rows = [["内容"], [content]]
+        for row in rows:
+            ws.append([self._to_excel_cell(cell) for cell in row])
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out_path)
+
+    def _content_to_rows(self, content: str) -> List[List[Any]]:
+        text = (content or "").strip()
+        if not text:
+            return []
+
+        try:
+            payload = json.loads(text)
+            rows = self._json_to_rows(payload)
+            if rows:
+                return rows
+        except Exception:
+            pass
+
+        markdown_rows: List[List[str]] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not (line.startswith("|") and line.endswith("|")):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if cells and all(c and set(c) <= {"-", ":"} for c in cells):
+                continue
+            markdown_rows.append(cells)
+        if markdown_rows:
+            return markdown_rows
+
+        try:
+            dialect = csv.Sniffer().sniff(text[:2048], delimiters=",\t;")
+            reader = csv.reader(text.splitlines(), dialect)
+            rows = [row for row in reader if row]
+            if rows and any(len(row) > 1 for row in rows):
+                return rows
+        except Exception:
+            pass
+
+        return [["内容"], *[[line] for line in text.splitlines()]]
+
+    def _json_to_rows(self, payload: Any) -> List[List[Any]]:
+        if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
+            payload = payload.get("entities")
+        if isinstance(payload, dict):
+            return [["字段", "值"], *[[key, value] for key, value in payload.items()]]
+        if isinstance(payload, list) and payload and all(isinstance(item, dict) for item in payload):
+            headers: List[str] = []
+            for item in payload:
+                for key in item.keys():
+                    if key not in headers:
+                        headers.append(str(key))
+            return [headers, *[[item.get(header, "") for header in headers] for item in payload]]
+        if isinstance(payload, list):
+            return [["值"], *[[item] for item in payload]]
+        return []
 
     def _get_parser(self, file_type: str):
         """

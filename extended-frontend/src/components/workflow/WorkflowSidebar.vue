@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useWorkflowStore } from '../../stores/workflowStore'
 
 const workflowStore = useWorkflowStore()
@@ -42,6 +42,41 @@ function handleAddNode(item) {
 
 function handleLoadTranslationTemplate() {
   workflowStore.loadTranslationTemplate()
+}
+
+/** 组件库搜索过滤（拖拽仍作用于当前列表项） */
+const filteredToolboxSections = computed(() => {
+  const q = toolboxSearch.value.trim().toLowerCase()
+  if (!q) return workflowStore.toolboxItems
+  return workflowStore.toolboxItems
+    .map(section => ({
+      ...section,
+      items: section.items.filter(
+        i =>
+          i.name.toLowerCase().includes(q) ||
+          (i.title && i.title.toLowerCase().includes(q)) ||
+          (i.body && i.body.toLowerCase().includes(q))
+      )
+    }))
+    .filter(section => section.items.length > 0)
+})
+
+function onToolboxDragStart(e, item) {
+  const payload = JSON.stringify({
+    schemaKey: item.schemaKey,
+    type: item.type,
+    icon: item.icon,
+    title: item.title,
+    body: item.body,
+    name: item.name
+  })
+  try {
+    e.dataTransfer.setData('application/x-workflow-node', payload)
+  } catch (_) {
+    /* 部分环境仅支持 text/plain */
+  }
+  e.dataTransfer.setData('text/plain', payload)
+  e.dataTransfer.effectAllowed = 'copy'
 }
 </script>
 
@@ -164,22 +199,35 @@ function handleLoadTranslationTemplate() {
           />
         </div>
 
-        <!-- Toolbox -->
+        <!-- Toolbox：左侧可拖入画布，右侧 + 仍一键添加 -->
         <div class="sidebar-scroll">
           <div
-            v-for="section in workflowStore.toolboxItems"
+            v-for="section in filteredToolboxSections"
             :key="section.section"
             class="toolbox-section"
           >
             <div class="toolbox-section-title">{{ section.section }}</div>
             <div
               v-for="item in section.items"
-              :key="item.name"
+              :key="section.section + '|' + item.schemaKey + '|' + item.name"
               class="toolbox-item"
             >
-              <div class="toolbox-item-icon">{{ item.icon }}</div>
-              <span class="toolbox-item-name">{{ item.name }}</span>
-              <button class="toolbox-item-add" title="添加到画布" @click.stop="handleAddNode(item)">+</button>
+              <div
+                class="toolbox-item-main"
+                draggable="true"
+                title="按住拖到画布"
+                @dragstart="onToolboxDragStart($event, item)"
+              >
+                <div class="toolbox-item-icon">{{ item.icon }}</div>
+                <span class="toolbox-item-name">{{ item.name }}</span>
+              </div>
+              <button
+                type="button"
+                class="toolbox-item-add"
+                draggable="false"
+                title="添加到画布末尾"
+                @click.stop="handleAddNode(item)"
+              >+</button>
             </div>
           </div>
         </div>
@@ -326,5 +374,18 @@ function handleLoadTranslationTemplate() {
 .workflow-empty-btn:hover {
   background: rgba(99, 102, 241, 0.25);
   border-color: var(--accent-primary);
+}
+
+.toolbox-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: grab;
+}
+
+.toolbox-item-main:active {
+  cursor: grabbing;
 }
 </style>

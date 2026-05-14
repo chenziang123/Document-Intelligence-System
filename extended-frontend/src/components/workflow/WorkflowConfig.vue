@@ -292,17 +292,39 @@ const currentFormat = computed(() => {
   return getFieldValue({ key: 'outputFormat' }, node) || workflowStore.outputFormats[0]?.code
 })
 
+/** 是否显示该 schema 字段（支持 conditionField、dependsOn、arrayIncludes） */
+function isFieldVisible(field, node) {
+  if (!node) return false
+  if (field.conditionField != null && field.conditionValue !== undefined) {
+    const actual = getFieldValue({ key: field.conditionField }, node)
+    if (actual !== field.conditionValue) return false
+  }
+  const raw = field.dependsOn
+  if (!raw) return true
+  const deps = Array.isArray(raw) ? raw : [raw]
+  for (const dep of deps) {
+    const val = getFieldValue({ key: dep.field }, node)
+    if (dep.arrayIncludes != null) {
+      const arr = Array.isArray(val) ? val : val != null ? [val] : []
+      if (!arr.includes(dep.arrayIncludes)) return false
+    } else if (dep.value !== undefined && val !== dep.value) {
+      return false
+    }
+  }
+  return true
+}
+
 const filteredFields = computed(() => {
   const schema = getNodeSchema(workflowStore.selectedNode)
   if (!schema?.fields) return []
-  return schema.fields.filter(f => {
-    if (f.conditionField && f.conditionValue !== undefined) {
-      const node = workflowStore.selectedNode
-      const actualValue = getFieldValue({ key: f.conditionField }, node)
-      return actualValue === f.conditionValue
-    }
-    return true
-  })
+  return schema.fields.filter(f => isFieldVisible(f, workflowStore.selectedNode))
+})
+
+/** 当前选中节点在执行顺序（canvasNodes 序列）中的索引 */
+const selectedStepOrderIndex = computed(() => {
+  const id = workflowStore.selectedNodeId
+  if (!id) return -1
+  return workflowStore.canvasNodes.findIndex(n => n.id === id)
 })
 
 const executionButtonText = computed(() => {
@@ -316,15 +338,32 @@ const executionButtonText = computed(() => {
     'AI 翻译': '翻译',
     '内容提取': '提取',
     '数据抽取': '抽取',
+    '实体提取': '提取',
+    '数据处理': '处理',
+    '数据清洗': '清洗',
+    '表格提取': '提取',
+    '数据汇总': '汇总',
     '内容分析': '分析',
     '文本增强': '增强',
     '格式转换': '转换',
-    '文档分割': '分割'
+    '文档分割': '分割',
+    '保存 Excel': '导出',
+    '保存文本': '保存'
   }
   
   const verb = verbMap[title] || '处理'
   return `开始${verb}`
 })
+
+function nodeStatusText(status) {
+  const map = {
+    pending: '等待中',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败'
+  }
+  return map[status] || '未开始'
+}
 </script>
 
 <template>
@@ -474,14 +513,44 @@ const executionButtonText = computed(() => {
           </div>
         </div>
 
+        <!-- 执行顺序（与画布坐标独立，决定上下游与运行步骤） -->
+        <div v-if="workflowStore.canvasNodes.length > 1" class="config-group step-order-group">
+          <div class="config-group-label">执行顺序</div>
+          <p class="step-order-hint">
+            画布拖拽只改变卡片位置；流水线先后请用下方按钮，或节点卡片上的 ◀ ▶。
+          </p>
+          <div class="step-order-row">
+            <button
+              type="button"
+              class="step-order-btn"
+              :disabled="selectedStepOrderIndex <= 0"
+              title="前移：更早执行"
+              @click="workflowStore.moveNodeEarlier(workflowStore.selectedNodeId)"
+            >前移</button>
+            <span class="step-order-pos">第 {{ selectedStepOrderIndex + 1 }} / {{ workflowStore.canvasNodes.length }} 步</span>
+            <button
+              type="button"
+              class="step-order-btn"
+              :disabled="selectedStepOrderIndex < 0 || selectedStepOrderIndex >= workflowStore.canvasNodes.length - 1"
+              title="后移：更晚执行"
+              @click="workflowStore.moveNodeLater(workflowStore.selectedNodeId)"
+            >后移</button>
+          </div>
+        </div>
+
         <!-- Fields -->
         <div class="config-group">
           <div class="config-group-label">参数配置</div>
 
-          <template v-for="field in filteredFields" :key="field.key">
+          <template v-for="(field, fIdx) in filteredFields" :key="field.key || ('static-' + fIdx)">
+
+            <!-- ===== 静态说明 ===== -->
+            <div v-if="field.type === 'static'" class="field field-static-row">
+              <p class="field-static-text">{{ field.text }}</p>
+            </div>
 
             <!-- ===== 输出模式选择 ===== -->
-            <div v-if="field.type === 'output-mode-select'" class="field">
+            <div v-else-if="field.type === 'output-mode-select'" class="field">
               <label class="field-label">{{ field.label }}</label>
               <div class="source-tabs">
                 <button
@@ -498,7 +567,7 @@ const executionButtonText = computed(() => {
             </div>
 
             <!-- ===== 输入来源选择 ===== -->
-            <div v-if="field.type === 'select-source'" class="field">
+            <div v-else-if="field.type === 'select-source'" class="field">
               <label class="field-label">{{ field.label }}</label>
               <div class="source-tabs">
                 <button
@@ -795,6 +864,23 @@ const executionButtonText = computed(() => {
         <div v-if="workflowStore.isExecuting || workflowStore.executionLogs.length > 0" class="execution-status">
           <div class="exec-progress-bar">
             <div class="exec-progress-fill" :style="{ width: workflowStore.executionProgress + '%' }"></div>
+          </div>
+          <div v-if="workflowStore.nodeProgress.length > 0" class="node-progress-list">
+            <div
+              v-for="item in workflowStore.nodeProgress"
+              :key="item.id"
+              class="node-progress-item"
+              :class="'node-progress-' + item.status"
+            >
+              <div class="node-progress-main">
+                <span class="node-progress-index">{{ item.index }}</span>
+                <span class="node-progress-title">{{ item.title }}</span>
+                <span class="node-progress-state">{{ nodeStatusText(item.status) }}</span>
+              </div>
+              <div class="node-progress-track">
+                <div class="node-progress-fill" :style="{ width: (item.progress || 0) + '%' }"></div>
+              </div>
+            </div>
           </div>
           <div class="exec-logs">
             <div
@@ -1172,6 +1258,67 @@ const executionButtonText = computed(() => {
   margin-top: 6px;
 }
 
+.field-static-row {
+  margin: 0 0 10px;
+}
+
+.field-static-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.step-order-group {
+  margin-bottom: 4px;
+}
+
+.step-order-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.step-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-order-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.step-order-btn:hover:not(:disabled) {
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+}
+
+.step-order-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.step-order-pos {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 .field-badge {
   display: inline-block;
   margin: 4px 0 8px;
@@ -1263,6 +1410,89 @@ const executionButtonText = computed(() => {
   background: linear-gradient(90deg, var(--accent-success), var(--accent-cyan));
   border-radius: 3px;
   transition: width 0.5s ease;
+}
+
+.node-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.node-progress-item {
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.node-progress-main {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.node-progress-index {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.node-progress-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.node-progress-state {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.node-progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+}
+
+.node-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--text-muted);
+  transition: width 0.35s ease;
+}
+
+.node-progress-running .node-progress-index,
+.node-progress-running .node-progress-fill {
+  background: var(--accent-cyan);
+  color: #06202a;
+}
+
+.node-progress-completed .node-progress-index,
+.node-progress-completed .node-progress-fill {
+  background: var(--accent-success);
+  color: white;
+}
+
+.node-progress-failed .node-progress-index,
+.node-progress-failed .node-progress-fill {
+  background: #ef4444;
+  color: white;
 }
 
 .exec-logs {

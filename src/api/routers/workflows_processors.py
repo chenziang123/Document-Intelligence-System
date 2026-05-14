@@ -2,7 +2,8 @@
 工作流处理器模块 - 各种LLM处理函数
 包括翻译、提取、分析、增强、转换、分割等功能
 """
-from typing import Any, Dict, Optional
+import json
+from typing import Any, Dict, List, Optional
 from config import SystemConfig
 from utils.logger import get_logger
 
@@ -53,6 +54,18 @@ def _process_node(content: str, file_name: str, node, config: SystemConfig, stat
         return _sentiment_enhanced_content(content, file_name, config_values)
     if schema_key in {"schema-timeline-extract"}:
         return _timeline_extract_content(content, file_name, config_values)
+    if schema_key in {"schema-entity-extraction"}:
+        return _entity_extraction_content(content, file_name, config_values)
+    if schema_key in {"schema-data-process"}:
+        return _data_process_content(content, file_name, config_values)
+    if schema_key in {"schema-data-clean"}:
+        return _data_clean_content(content, file_name, config_values)
+    if schema_key in {"schema-table-extract"}:
+        return _table_extract_content(content, file_name, config_values)
+    if schema_key in {"schema-data-rollup"}:
+        return _data_rollup_content(content, file_name, config_values)
+    if schema_key in {"schema-save-excel", "schema-save-text"}:
+        return content
 
     # 无 schemaKey 时回退到历史标题匹配逻辑，保持向后兼容
     node_title_lower = node_title.lower()
@@ -89,6 +102,169 @@ def _process_node(content: str, file_name: str, node, config: SystemConfig, stat
     else:
         logger.warning(f"未知处理类型: type={node_type}, schema={schema_key}, title={node_title}")
         return content
+
+
+def _text_sample(content: str, limit: int = 8000) -> str:
+    return content[:limit] if len(content) > limit else content
+
+
+def _split_config_text(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    for sep in ["\r\n", "\n", ";", "；", ",", "，"]:
+        text = text.replace(sep, "\n")
+    return [x.strip() for x in text.split("\n") if x.strip()]
+
+
+def _chat_or_keep(content: str, prompt: str, task_name: str, temperature: float = 0.3) -> str:
+    service = _get_llm_service()
+    if not service:
+        return content
+    try:
+        response = service.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            strip_markdown_output=False,
+        )
+        return response if isinstance(response, str) else str(response)
+    except Exception as e:
+        logger.error(f"{task_name}失败: {e}")
+        return content
+
+
+def _entity_extraction_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """按前端配置抽取结构化实体，输出JSON文本。"""
+    fields = _split_config_text(config_values.get("entityFieldList"))
+    custom_types = _split_config_text(config_values.get("customEntityTypes"))
+    alias_map = str(config_values.get("aliasMap") or "").strip()
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    if not fields and not custom_types and not custom_prompt:
+        raise ValueError("实体提取节点缺少配置：请填写提取字段列表、自定义实体类型或补充抽取规则")
+
+    text = _text_sample(content)
+    prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else custom_prompt
+    prompt = (
+        "请从文档中抽取结构化实体，必须只输出JSON对象，不要输出解释文字。\n"
+        "JSON结构：{\"schema\":{\"fields\":[...]},\"entities\":[{...}],\"source_file\":\"...\"}\n"
+        f"源文件：{file_name}\n"
+        f"字段列表：{fields or '按规则自行判断'}\n"
+        f"自定义实体类型：{custom_types or '无'}\n"
+        f"字段别名映射：{alias_map or '无'}\n"
+        f"补充规则：{prompt or '无'}\n\n"
+        f"文档内容：\n{text}"
+    )
+    return _chat_or_keep(content, prompt, "实体提取", temperature=0.2)
+
+
+def _data_process_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """按配置对表格/结构化文本做排序、筛选、汇总等处理。"""
+    process_kind = str(config_values.get("processKind") or "").strip()
+    allowed = {"sort", "filter", "aggregate", "dedupe", "fill_null", "computed_column", "merge_columns", "split_column"}
+    if process_kind not in allowed:
+        raise ValueError("数据处理节点配置无效：processKind必须是排序、筛选、汇总、去重、填充空值、新增计算列、合并列或拆分列")
+
+    required_by_kind = {
+        "sort": ["sortColumn"],
+        "filter": ["filterExpr"],
+        "aggregate": ["aggregateColumn", "aggregateOp"],
+        "fill_null": ["fillColumns"],
+        "computed_column": ["computedColumnName", "computedFormula"],
+        "merge_columns": ["mergeSourceColumns", "mergeTargetColumn"],
+        "split_column": ["splitSourceColumn", "splitIntoColumns"],
+    }
+    missing = [key for key in required_by_kind.get(process_kind, []) if not str(config_values.get(key) or "").strip()]
+    if missing:
+        raise ValueError(f"数据处理节点缺少配置：{', '.join(missing)}")
+
+    text = _text_sample(content)
+    prompt = (
+        "请按配置处理下方表格或结构化文本。优先保持输入的数据格式；如果无法保留原格式，输出Markdown表格。\n"
+        "不要编造不存在的列或数据；配置无法完全执行时，在结果末尾用【处理说明】写明原因。\n"
+        f"处理类型：{process_kind}\n"
+        f"配置JSON：{json.dumps(config_values, ensure_ascii=False)}\n\n"
+        f"内容：\n{text}"
+    )
+    return _chat_or_keep(content, prompt, "数据处理", temperature=0.2)
+
+
+def _data_clean_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """按清洗规则规范化结构化文本。"""
+    rules = config_values.get("cleanRules") or []
+    if isinstance(rules, str):
+        rules = _split_config_text(rules)
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("数据清洗节点缺少配置：cleanRules不能为空")
+
+    result = content
+    if "trim_spaces" in rules:
+        result = "\n".join(line.strip() for line in result.splitlines())
+
+    complex_rules = [r for r in rules if r != "trim_spaces"]
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    if not complex_rules and not custom_prompt:
+        return result
+
+    text = _text_sample(result)
+    prompt = (
+        "请按配置清洗下方数据，保持原数据格式和列结构，无法处理的规则在结果末尾用【清洗说明】说明。\n"
+        f"清洗规则：{complex_rules or rules}\n"
+        f"目标日期格式：{config_values.get('dateFormatPattern') or '不指定'}\n"
+        f"数字小数位数：{config_values.get('numberDecimalPlaces') or '不指定'}\n"
+        f"补充规则：{custom_prompt or '无'}\n\n"
+        f"内容：\n{text}"
+    )
+    return _chat_or_keep(result, prompt, "数据清洗", temperature=0.2)
+
+
+def _table_extract_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """从文档文本中抽取表格，输出Markdown表格或表格清单。"""
+    strategy = str(config_values.get("tableStrategy") or "first").strip()
+    if strategy not in {"first", "all", "by_index"}:
+        raise ValueError("表格提取节点配置无效：tableStrategy必须为first、all或by_index")
+    if strategy == "by_index":
+        try:
+            table_index = int(config_values.get("tableIndex"))
+            if table_index <= 0:
+                raise ValueError()
+        except Exception:
+            raise ValueError("表格提取节点缺少配置：tableIndex必须是从1开始的正整数")
+
+    text = _text_sample(content)
+    prompt = (
+        "请从文档中提取表格，输出Markdown表格；如果有多个表格，请用二级标题区分。\n"
+        "不要输出表格以外的解释，确实没有表格时输出：未发现可提取表格。\n"
+        f"提取策略：{strategy}\n"
+        f"表格序号：{config_values.get('tableIndex') or '不指定'}\n"
+        f"首行为表头：{bool(config_values.get('hasHeader', True))}\n"
+        f"补充说明：{config_values.get('prompt') or '无'}\n\n"
+        f"文档内容：\n{text}"
+    )
+    return _chat_or_keep(content, prompt, "表格提取", temperature=0.2)
+
+
+def _data_rollup_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """按维度与指标对结构化数据做汇总。"""
+    dims = _split_config_text(config_values.get("rollupDims"))
+    metrics = _split_config_text(config_values.get("rollupMetrics"))
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    if not dims and not metrics and not custom_prompt:
+        raise ValueError("数据汇总节点缺少配置：请填写分类维度、指标与聚合或补充说明")
+
+    text = _text_sample(content)
+    prompt = (
+        "请对下方数据做统计汇总，并输出Markdown表格和简要结论。\n"
+        "如果数据不足以汇总，请说明缺失的列或条件，不要编造数据。\n"
+        f"分类维度：{dims or '无'}\n"
+        f"指标与聚合：{metrics or '无'}\n"
+        f"补充说明：{custom_prompt or '无'}\n\n"
+        f"内容：\n{text}"
+    )
+    return _chat_or_keep(content, prompt, "数据汇总", temperature=0.2)
 
 
 def _translate_content(content: str, file_name: str, config: SystemConfig, config_values: Dict = None) -> Optional[str]:

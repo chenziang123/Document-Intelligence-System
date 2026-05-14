@@ -67,6 +67,10 @@ def test_workflow_execute_success_and_status_query(api_client):
     assert isinstance(final_state.get("output_files"), list)
     assert len(final_state["output_files"]) >= 1
     assert final_state.get("error_code") in (None, "")
+    assert final_state.get("total_nodes") == 3
+    assert final_state.get("node_progress")
+    assert [n.get("status") for n in final_state["node_progress"]] == ["completed", "completed", "completed"]
+    assert final_state.get("current_node_name") == "输出文件"
 
 
 def test_workflow_failure_then_recovery(api_client):
