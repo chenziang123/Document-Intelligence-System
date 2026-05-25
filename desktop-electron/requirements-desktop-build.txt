@@ -1,3 +1,0 @@
-# PyInstaller 打包用（.venv-build）
--r requirements.txt
-pyinstaller>=6.0
