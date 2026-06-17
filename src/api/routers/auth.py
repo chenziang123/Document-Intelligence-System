@@ -17,6 +17,7 @@ from db.auth_repository import (
     get_user_by_phone,
     revoke_auth_session,
     resolve_user_from_authorization,
+    update_user_display_name,
     update_user_last_login,
 )
 
@@ -32,6 +33,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     phone: str = Field(..., description="手机号")
     password: str = Field(..., description="密码")
+
+
+class UpdateProfileRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=32, description="昵称")
 
 
 class AuthUserResponse(BaseModel):
@@ -69,30 +74,38 @@ async def register(request: RegisterRequest, http_request: Request):
     if not cfg.database.enabled:
         raise HTTPException(status_code=503, detail="数据库未启用")
 
-    existing = get_user_by_phone(request.phone, cfg)
-    if existing:
-        raise HTTPException(status_code=409, detail="手机号已注册")
+    try:
+        existing = get_user_by_phone(request.phone, cfg)
+        if existing:
+            raise HTTPException(status_code=409, detail="手机号已注册")
 
-    password_hash = hash_password(request.password)
-    user = create_user(request.phone, password_hash, request.display_name, cfg)
-    access_token = create_access_token(
-        secret_key=cfg.auth.secret_key,
-        subject=user.id,
-        phone=user.phone,
-        display_name=user.display_name,
-        status=user.status,
-        expires_delta_minutes=cfg.auth.access_token_ttl_minutes,
-    )
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=cfg.auth.access_token_ttl_minutes)
-    create_auth_session(
-        user.id,
-        access_token,
-        expires_at,
-        user_agent=http_request.headers.get("user-agent"),
-        ip_address=http_request.client.host if http_request.client else None,
-        config=cfg,
-    )
-    update_user_last_login(user.id, cfg)
+        password_hash = hash_password(request.password)
+        user = create_user(request.phone, password_hash, request.display_name, cfg)
+        access_token = create_access_token(
+            secret_key=cfg.auth.secret_key,
+            subject=user.id,
+            phone=user.phone,
+            display_name=user.display_name,
+            status=user.status,
+            expires_delta_minutes=cfg.auth.access_token_ttl_minutes,
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=cfg.auth.access_token_ttl_minutes)
+        create_auth_session(
+            user.id,
+            access_token,
+            expires_at,
+            user_agent=http_request.headers.get("user-agent"),
+            ip_address=http_request.client.host if http_request.client else None,
+            config=cfg,
+        )
+        update_user_last_login(user.id, cfg)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"注册失败: {exc}") from exc
+
     return AuthResponse(
         access_token=access_token,
         token_type="bearer",
@@ -147,6 +160,60 @@ async def me(authorization: Optional[str] = Header(default=None)):
     except PermissionError as exc:
         raise HTTPException(status_code=401, detail=str(exc))
     return AuthUserResponse(**_user_to_dict(user))
+
+
+@router.patch("/me", response_model=AuthResponse)
+async def update_me(
+    request: UpdateProfileRequest,
+    http_request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    cfg = load_config()
+    if not cfg.database.enabled:
+        raise HTTPException(status_code=503, detail="数据库未启用")
+
+    token = bearer_token_from_header(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少 Authorization Bearer token")
+
+    try:
+        user = resolve_user_from_authorization(authorization, cfg, required=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    display_name = request.display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
+
+    updated = update_user_display_name(user.id, display_name, cfg)
+    if not updated:
+        raise HTTPException(status_code=500, detail="更新用户信息失败")
+
+    revoke_auth_session(token, cfg)
+    access_token = create_access_token(
+        secret_key=cfg.auth.secret_key,
+        subject=updated.id,
+        phone=updated.phone,
+        display_name=updated.display_name,
+        status=updated.status,
+        expires_delta_minutes=cfg.auth.access_token_ttl_minutes,
+    )
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=cfg.auth.access_token_ttl_minutes)
+    create_auth_session(
+        updated.id,
+        access_token,
+        expires_at,
+        user_agent=http_request.headers.get("user-agent"),
+        ip_address=http_request.client.host if http_request.client else None,
+        config=cfg,
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=cfg.auth.access_token_ttl_minutes * 60,
+        user=AuthUserResponse(**_user_to_dict(updated)),
+    )
 
 
 @router.post("/logout")

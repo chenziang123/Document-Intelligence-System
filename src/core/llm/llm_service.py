@@ -6,12 +6,35 @@ from typing import Dict, List, Optional, Any, Union, Callable
 import re
 import os
 
+import httpx
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_core.callbacks.base import BaseCallbackHandler
 from config import get_config, LLMConfig
 from utils.logger import get_logger
+
+
+_HTTP_CLIENT: Optional[httpx.Client] = None
+_HTTP_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
+
+
+def _llm_http_clients() -> tuple[httpx.Client, httpx.AsyncClient]:
+    """复用直连客户端，避免走本机失效代理（如未启动的 127.0.0.1:7890）。"""
+    global _HTTP_CLIENT, _HTTP_ASYNC_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.Client(trust_env=False)
+    if _HTTP_ASYNC_CLIENT is None:
+        _HTTP_ASYNC_CLIENT = httpx.AsyncClient(trust_env=False)
+    return _HTTP_CLIENT, _HTTP_ASYNC_CLIENT
+
+
+def build_chat_openai(**kwargs) -> ChatOpenAI:
+    """创建 ChatOpenAI，默认绕过系统/环境代理。"""
+    http_client, http_async_client = _llm_http_clients()
+    kwargs.setdefault("http_client", http_client)
+    kwargs.setdefault("http_async_client", http_async_client)
+    return ChatOpenAI(**kwargs)
 
 
 def _normalize_ai_content(content: Any) -> str:
@@ -126,7 +149,7 @@ class LLMService:
             api_key = self._get_api_key()
             base_url = self._get_base_url()
 
-            self._client = ChatOpenAI(
+            self._client = build_chat_openai(
                 api_key=api_key,
                 base_url=base_url,
                 model=self.config.model,
@@ -193,7 +216,7 @@ class LLMService:
 
         # 创建临时客户端（如果参数不同）
         if model or temperature is not None or max_tokens:
-            client = ChatOpenAI(
+            client = build_chat_openai(
                 api_key=api_key,
                 base_url=self._get_base_url(),
                 model=model or self.config.model,
@@ -330,7 +353,7 @@ class LLMService:
         langchain_messages = self._convert_messages(messages)
 
         callbacks = callbacks or [StreamingStdOutCallbackHandler()]
-        client = ChatOpenAI(
+        client = build_chat_openai(
             api_key=api_key,
             base_url=self._get_base_url(),
             model=self.config.model,

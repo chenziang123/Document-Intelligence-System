@@ -58,7 +58,13 @@ class TaskListPage:
     offset: int
 
 
+from db.mysql_compat import parse_json_value
+
+
 def row_to_task(row: Dict[str, Any]) -> TaskRow:
+    metadata = row["metadata"]
+    if not isinstance(metadata, dict):
+        metadata = parse_json_value(metadata) or {}
     return TaskRow(
         id=row["id"],
         task_id=row["task_id"],
@@ -67,7 +73,7 @@ def row_to_task(row: Dict[str, Any]) -> TaskRow:
         error_code=row.get("error_code"),
         error_message=row.get("error_message"),
         parent_task_id=row.get("parent_task_id"),
-        metadata=row["metadata"] if isinstance(row["metadata"], dict) else {},
+        metadata=metadata,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         started_at=row.get("started_at"),
@@ -76,7 +82,7 @@ def row_to_task(row: Dict[str, Any]) -> TaskRow:
 
 
 def row_to_extraction(row: Dict[str, Any]) -> ExtractionResultRow:
-    pl = row["payload"]
+    pl = parse_json_value(row["payload"])
     if not isinstance(pl, dict):
         pl = {}
     return ExtractionResultRow(

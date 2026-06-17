@@ -12,7 +12,7 @@ from core.storage import download_file_to_local
 from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import TaskSpec, TaskType, FileInfo, FileType
 from db.session_repository import get_messages, get_session_files
-from langchain_openai import ChatOpenAI
+from core.llm.llm_service import build_chat_openai
 
 # ============================================================================
 # Session 级别的 Agent 实例缓存
@@ -81,6 +81,24 @@ def _resolve_local_file_path(file_dict: Dict[str, Any], config: SystemConfig, se
     return storage_key
 
 
+def _merge_message_files(
+    files: Optional[List[Dict[str, Any]]],
+    template_files: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """合并数据文件与模板文件，聊天附件统一作为文档来源。"""
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for bucket in (files or [], template_files or []):
+        for f in bucket:
+            name = str(f.get("file_name") or f.get("storage_key") or "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            if f.get("is_selected", True):
+                merged.append(f)
+    return merged
+
+
 def set_agent_files(agent: Any, files: List[Dict[str, Any]], config: SystemConfig, session_id: str = None):
     """
     将消息携带的文件设置到 agent。
@@ -103,10 +121,11 @@ def set_agent_files(agent: Any, files: List[Dict[str, Any]], config: SystemConfi
         if not is_selected:
             continue
         file_path = _resolve_local_file_path(f, config, session_id)
-        if not file_path and session_id and f.get('file_id'):
+        file_id = f.get("file_id") or f.get("id")
+        if not file_path and session_id and file_id:
             db_files = get_session_files(session_id, config=config)
             for db_file in db_files:
-                if db_file.id == f.get('file_id'):
+                if db_file.id == file_id:
                     file_path = _resolve_local_file_path(
                         {
                             "storage_key": getattr(db_file, "storage_key", None),
@@ -230,26 +249,35 @@ class AgentService:
         else:
             mode = str(mode).strip()
 
-        # 默认对话：直连 LLM 流式
+        # 默认对话：有附件时走文档理解链路读取文件内容
         if mode == "default_conversation":
+            doc_files = _merge_message_files(files, template_files)
+            if doc_files:
+                agent = await self._get_document_agent(session_id, content, doc_files)
+                async for part in self._stream_sync_generator(agent.stream_chat(content)):
+                    yield part
+                return
             async for part in self._stream_default_conversation(session_id):
                 yield part
             return
 
-        # 文档理解模式：每次都基于当前勾选的文件回答
+        # 文档理解模式：数据文件与模板文件均可作为阅读来源
         if mode == "document_understanding":
-            agent = await self._get_document_agent(session_id, content, files)
+            doc_files = _merge_message_files(files, template_files)
+            agent = await self._get_document_agent(session_id, content, doc_files or None)
             async for part in self._stream_sync_generator(agent.stream_chat(content)):
                 yield part
             return
 
         # 文档编辑模式：走工作流协调器，进入 AgentA 真实编辑链路
         if mode == "document_editing":
-            task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
+            task_spec = self._build_task_spec(
+                session_id, mode, content, files or [], template_files, merge_templates_as_source=True
+            )
             result = await asyncio.to_thread(self.coordinator.execute, task_spec, progress_callback=progress_callback)
             await asyncio.sleep(0)
 
-            message = result.message if result else "文档编辑完成"
+            message = self._format_document_editing_message(result)
             for char in message:
                 yield char
                 await asyncio.sleep(0.005)
@@ -339,17 +367,24 @@ class AgentService:
 
         # 默认对话
         if mode == "default_conversation":
+            doc_files = _merge_message_files(files, template_files)
+            if doc_files:
+                agent = await self._get_document_agent(session_id, content, doc_files)
+                return agent.chat(content)
             return await self._get_conversation_response(session_id)
 
-        # 文档理解模式：每次都基于当前勾选的文件回答
+        # 文档理解模式
         if mode == "document_understanding":
-            agent = await self._get_document_agent(session_id, content, files)
+            doc_files = _merge_message_files(files, template_files)
+            agent = await self._get_document_agent(session_id, content, doc_files or None)
             return agent.chat(content)
 
         if mode == "document_editing":
-            task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
+            task_spec = self._build_task_spec(
+                session_id, mode, content, files or [], template_files, merge_templates_as_source=True
+            )
             result = await asyncio.to_thread(self.coordinator.execute, task_spec)
-            return result.message if result else "文档编辑完成"
+            return self._format_document_editing_message(result)
 
         # 其他模式
         task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
@@ -398,6 +433,36 @@ class AgentService:
             file_type=self._get_file_type(file_dict.get('file_name', '')),
         )
 
+    def _format_document_editing_message(self, result) -> str:
+        """将文档编辑结果格式化为用户可读回复。"""
+        if not result:
+            return "文档编辑失败：未收到执行结果"
+
+        agent_response = result.data
+        inner_data = getattr(agent_response, "data", None) if agent_response is not None else None
+        if not isinstance(inner_data, dict):
+            inner_data = {}
+
+        if not result.success:
+            return result.message or getattr(agent_response, "message", "文档编辑失败")
+
+        if inner_data.get("edited"):
+            output_file = inner_data.get("output_file") or result.output_file
+            file_name = Path(output_file).name if output_file else ""
+            if file_name:
+                return f"文档编辑完成，已生成可下载文件：{file_name}"
+            return result.message or "文档编辑完成，已生成可下载文件"
+
+        suggestions = inner_data.get("suggestions") or []
+        if suggestions:
+            return f"未能执行编辑：{suggestions[0]}"
+        validation_errors = inner_data.get("validation_errors") or []
+        if validation_errors:
+            err = validation_errors[0]
+            suggestion = err.get("suggestion") or err.get("reason") or "动作与文件类型不兼容"
+            return f"未能执行编辑：{suggestion}"
+        return getattr(agent_response, "message", result.message) or "未能执行编辑，请确认已上传 docx/md/txt/xlsx 文件"
+
     def _build_task_spec(
         self,
         session_id: str,
@@ -405,10 +470,19 @@ class AgentService:
         content: str,
         files: List[Dict[str, Any]],
         template_files: Optional[List[Dict[str, Any]]] = None,
+        merge_templates_as_source: bool = False,
     ) -> TaskSpec:
         """构建任务规格"""
-        # 获取数据文件
-        source_files = [self._build_file_info(f, session_id) for f in files if f.get('is_selected', True)]
+        if merge_templates_as_source:
+            file_list = _merge_message_files(files, template_files)
+        else:
+            file_list = list(files or [])
+
+        source_files = [
+            self._build_file_info(f, session_id)
+            for f in file_list
+            if f.get("is_selected", True)
+        ]
 
         # 获取模板文件
         template_file = None
@@ -443,7 +517,7 @@ class AgentService:
             return
 
         lc_messages = llm._convert_messages(self._build_conversation_llm_messages(session_id))
-        client = ChatOpenAI(
+        client = build_chat_openai(
             api_key=llm._get_api_key(),
             base_url=llm._get_base_url(),
             model=llm.config.model,

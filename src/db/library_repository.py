@@ -1,11 +1,12 @@
 """文档库数据访问层（文档空间 & 文档，基于 library_documents 表）"""
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from psycopg.rows import dict_row
+from db.mysql_compat import dict_row
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured
@@ -100,16 +101,17 @@ def create_library_space(
     """创建文档空间"""
     cfg = config or get_config()
     now = _utc_now()
+    space_id = str(uuid.uuid4())
     with db_connection(cfg) as conn:
         with conn.transaction():
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    INSERT INTO document_spaces (user_id, name, icon, description, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO document_spaces (id, user_id, name, icon, description, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, user_id, name, icon, description, created_at, updated_at
                     """,
-                    (user_id, name, icon, description, now, now),
+                    (space_id, user_id, name, icon, description, now, now),
                 )
                 return _row_to_space(cur.fetchone())
 
@@ -306,6 +308,7 @@ def add_library_doc(
     cfg = config or get_config()
     now = _utc_now()
     file_ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else None
+    doc_id = str(uuid.uuid4())
 
     with db_connection(cfg) as conn:
         with conn.transaction():
@@ -313,17 +316,17 @@ def add_library_doc(
                 cur.execute(
                     """
                     INSERT INTO library_documents (
-                        space_id, user_id, file_name, mime_type,
+                        id, space_id, user_id, file_name, mime_type,
                         file_size, storage_key, blob_url,
                         file_extension, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, space_id, user_id, file_name, mime_type,
                               file_size, storage_key, blob_url,
                               file_extension, created_at, updated_at, deleted_at
                     """,
                     (
-                        space_id, user_id, file_name, mime_type,
+                        doc_id, space_id, user_id, file_name, mime_type,
                         file_size, storage_key, blob_url,
                         file_ext, now, now,
                     ),
@@ -391,23 +394,36 @@ def get_library_doc_by_id(
 
 def update_library_doc(
     doc_id: str,
+    file_name: Optional[str] = None,
     config: Optional[SystemConfig] = None,
     user_id: Optional[str] = None,
 ) -> Optional[LibraryDocRow]:
-    """更新文档（预留）"""
+    """更新文档元数据（当前支持重命名）"""
     cfg = config or get_config()
+    if file_name is None:
+        return get_library_doc_by_id(doc_id, config=cfg, user_id=user_id)
+
+    file_ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else None
+    now = _utc_now()
+    params: List[Any] = [file_name, file_ext, now, doc_id]
+    where_sql = "id = %s AND deleted_at IS NULL"
+    if user_id:
+        where_sql += " AND user_id = %s"
+        params.append(user_id)
+
     with db_connection(cfg) as conn:
         with conn.transaction():
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    """
-                    UPDATE library_documents SET updated_at = %s
-                    WHERE id = %s AND deleted_at IS NULL
+                    f"""
+                    UPDATE library_documents
+                    SET file_name = %s, file_extension = %s, updated_at = %s
+                    WHERE {where_sql}
                     RETURNING id, space_id, user_id, file_name, mime_type,
                               file_size, storage_key, blob_url,
                               file_extension, created_at, updated_at, deleted_at
                     """,
-                    (_utc_now(), doc_id),
+                    tuple(params),
                 )
                 row = cur.fetchone()
                 return _row_to_doc(row) if row else None

@@ -18,6 +18,23 @@ from .txt_adapter import TxtAdapter
 from .xlsx_adapter import XlsxAdapter
 
 
+def _execution_had_visible_effect(execution_report: list) -> bool:
+    """判断编辑动作是否真正改动了文档内容。"""
+    for item in execution_report:
+        if not item.get("success"):
+            continue
+        action_type = str(item.get("action_type", ""))
+        details = item.get("details") or {}
+        if action_type == "replace_text":
+            if int(details.get("replaced", 0) or 0) > 0:
+                return True
+            continue
+        if action_type == "extract_content":
+            continue
+        return True
+    return False
+
+
 class AgentA(BaseAgent):
 	"""
 	Agent_A 最小骨架。
@@ -159,8 +176,21 @@ class AgentA(BaseAgent):
 			real_edit_executed = True
 
 		message = "Agent_A 执行完成" if real_edit_executed else "Agent_A 最小骨架执行成功（未进行真实编辑）"
+		content_changed = _execution_had_visible_effect(execution_report) if real_edit_executed else False
+		if real_edit_executed and not content_changed:
+			replace_misses = [
+				item
+				for item in execution_report
+				if str(item.get("action_type")) == "replace_text"
+				and int((item.get("details") or {}).get("replaced", 0) or 0) == 0
+			]
+			if replace_misses:
+				find_text = (replace_misses[0].get("details") or {}).get("find", "")
+				message = f"未在文档中找到要替换的文本「{find_text}」，请检查措辞或给查找内容加引号"
+			else:
+				message = "文档编辑已执行，但未检测到内容变更"
 		return AgentResponse(
-			success=True,
+			success=content_changed if real_edit_executed else True,
 			message=message,
 			data={
 				"status": "completed" if real_edit_executed else "ready",
@@ -174,7 +204,7 @@ class AgentA(BaseAgent):
 					"passed": True,
 					"hints": precheck.hints,
 				},
-				"edited": real_edit_executed,
+				"edited": content_changed,
 				"output_file": output_file,
 				"execution_report": execution_report,
 				"extraction": extraction_outputs,

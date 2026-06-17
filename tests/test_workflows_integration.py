@@ -28,14 +28,10 @@ def _build_local_file_payload(name: str, text: str) -> Dict[str, Any]:
     return {"name": name, "size": len(text.encode("utf-8")), "content": encoded}
 
 
-def test_workflow_templates_detail_and_not_found(api_client):
-    ok_pdf = api_client.get("/api/workflows/templates/translate-pdf")
-    assert ok_pdf.status_code == 200
-    assert ok_pdf.json()["id"] == "translate-pdf"
-
-    ok_docx = api_client.get("/api/workflows/templates/translate-docx")
-    assert ok_docx.status_code == 200
-    assert ok_docx.json()["id"] == "translate-docx"
+def test_workflow_templates_list_empty_and_not_found(api_client):
+    listed = api_client.get("/api/workflows/templates")
+    assert listed.status_code == 200
+    assert listed.json().get("templates") == []
 
     missing = api_client.get("/api/workflows/templates/not-exist")
     assert missing.status_code == 404

@@ -163,6 +163,50 @@ function closeDeleteModal() {
   showDeleteModal.value = false
   deleteTargetSpace.value = null
 }
+
+// ==================== 重命名空间 ====================
+const showRenameModal = ref(false)
+const renameTargetSpace = ref(null)
+const renameInput = ref('')
+const isRenaming = ref(false)
+const renameError = ref('')
+
+function openRenameModal(space, event) {
+  event.stopPropagation()
+  renameTargetSpace.value = space
+  renameInput.value = space.name
+  renameError.value = ''
+  showRenameModal.value = true
+}
+
+async function handleRenameSpace() {
+  if (!renameTargetSpace.value) return
+  const newName = renameInput.value.trim()
+  if (!newName) {
+    renameError.value = '请输入空间名称'
+    return
+  }
+  if (newName === renameTargetSpace.value.name) {
+    closeRenameModal()
+    return
+  }
+  isRenaming.value = true
+  renameError.value = ''
+  try {
+    await libraryStore.renameSpace(renameTargetSpace.value.id, newName)
+    showRenameModal.value = false
+    renameTargetSpace.value = null
+  } catch (e) {
+    renameError.value = e.message || '重命名失败，请重试'
+  } finally {
+    isRenaming.value = false
+  }
+}
+
+function closeRenameModal() {
+  showRenameModal.value = false
+  renameTargetSpace.value = null
+}
 </script>
 
 <template>
@@ -200,6 +244,13 @@ function closeDeleteModal() {
         </span>
         <span class="space-name">{{ space.name }}</span>
         <span class="space-count">{{ space.doc_count }}</span>
+        <button
+          class="space-rename-btn"
+          title="重命名空间"
+          @click="openRenameModal(space, $event)"
+        >
+          ✎
+        </button>
         <button
           class="space-delete-btn"
           title="删除空间"
@@ -281,6 +332,51 @@ function closeDeleteModal() {
             >
               <span v-if="isCreating" class="btn-spinner"></span>
               <span v-else>创建</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ==================== 重命名空间弹窗 ==================== -->
+    <Teleport to="body">
+      <div class="modal-overlay" :class="{ active: showRenameModal }" @click.self="closeRenameModal">
+        <div class="modal">
+          <div class="modal-header">
+            <span class="modal-title">重命名空间</span>
+            <button class="modal-close" @click="closeRenameModal">×</button>
+          </div>
+
+          <div class="modal-body">
+            <div v-if="renameError" class="modal-error">
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
+              <span>{{ renameError }}</span>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label">空间名称</label>
+              <input
+                v-model="renameInput"
+                class="form-input"
+                placeholder="请输入新名称"
+                maxlength="50"
+                @keyup.enter="handleRenameSpace"
+                @input="renameError = ''"
+              />
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="modal-btn cancel" @click="closeRenameModal">取消</button>
+            <button
+              class="modal-btn primary"
+              :disabled="isRenaming"
+              @click="handleRenameSpace"
+            >
+              <span v-if="isRenaming" class="btn-spinner"></span>
+              <span v-else>确认</span>
             </button>
           </div>
         </div>
@@ -424,6 +520,7 @@ function closeDeleteModal() {
   color: var(--accent-primary);
 }
 
+.space-item:hover .space-rename-btn,
 .space-item:hover .space-delete-btn {
   opacity: 1;
 }
@@ -444,6 +541,28 @@ function closeDeleteModal() {
   padding: 2px 8px;
   border-radius: 0;
   flex-shrink: 0;
+}
+
+.space-rename-btn {
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.space-rename-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
 }
 
 .space-delete-btn {

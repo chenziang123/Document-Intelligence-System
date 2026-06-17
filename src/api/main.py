@@ -25,7 +25,7 @@ _SRC = Path(__file__).resolve().parent.parent
 _ROOT = _SRC.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-load_dotenv(_ROOT / ".env")
+load_dotenv(_ROOT / ".env", override=True)
 
 from config import load_config, set_config  # noqa: E402
 from db.connection import health_check, is_database_configured  # noqa: E402
@@ -104,6 +104,23 @@ def ok_body(data: Any) -> Dict[str, Any]:
 
 
 app = FastAPI(title="Document Intelligence API", version="0.1.0")
+
+
+@app.on_event("startup")
+def _log_runtime_python() -> None:
+    import logging
+
+    logger = logging.getLogger("api.main")
+    logger.info("Python 解释器: %s", sys.executable)
+    try:
+        import reportlab
+
+        logger.info("reportlab 已就绪: %s", reportlab.Version)
+    except ImportError:
+        logger.warning(
+            "reportlab 未安装，PDF 输出将失败。请使用 .venv 启动: "
+            r".\.venv\Scripts\python.exe -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8001"
+        )
 
 
 @app.exception_handler(RequestValidationError)

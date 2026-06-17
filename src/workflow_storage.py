@@ -156,20 +156,23 @@ def save_workflow(
 
 def delete_workflow(workflow_id: str, config: Optional[SystemConfig] = None) -> bool:
     """
-    删除指定工作流。
+    删除指定工作流（数据库为主时同时清理 JSON 降级文件中的残留）。
     """
-    if is_db_enabled(config):
-        return db_delete_workflow(workflow_id, config)
+    cfg = config or get_config()
+    deleted = False
 
-    # JSON 降级
-    all_data = _load_all(config)
+    if is_db_enabled(cfg):
+        deleted = db_delete_workflow(workflow_id, cfg)
+
+    all_data = _load_all(cfg)
     wf = all_data.get(workflow_id)
-    if not wf:
-        return False
-    if wf.get("type") == "template":
-        logger.warning(f"禁止删除模板工作流: {workflow_id}")
-        return False
-    del all_data[workflow_id]
-    _save_all(all_data, config)
-    logger.info(f"工作流已删除: {workflow_id}")
-    return True
+    if wf:
+        if wf.get("type") == "template":
+            logger.warning(f"禁止删除模板工作流: {workflow_id}")
+        else:
+            del all_data[workflow_id]
+            _save_all(all_data, cfg)
+            deleted = True
+            logger.info(f"工作流已从 JSON 缓存删除: {workflow_id}")
+
+    return deleted

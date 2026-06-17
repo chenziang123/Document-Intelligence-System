@@ -1,25 +1,36 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { Sparkles, AlertCircle } from 'lucide-vue-next'
+import { Shield, Smartphone, Lock, Eye, EyeOff, AlertCircle } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/authStore'
+import BrandLogo from './BrandLogo.vue'
 
 const authStore = useAuthStore()
 
 const activeTab = ref('login')
 const loading = ref(false)
 const errorText = ref('')
+const showPassword = ref(false)
 
-// 登录表单
 const loginPhone = ref('')
 const loginPassword = ref('')
-
-// 注册表单
 const registerPhone = ref('')
 const registerPassword = ref('')
 const registerDisplayName = ref('')
 
+const highlights = [
+  '文档理解 · 问答与信息提取',
+  '文档编辑 · 替换、统一样式、生成目录',
+  '提取填表 · Word 字段自动填入 Excel',
+  '工作流编排 · 拖拽 Agent 节点批量处理',
+]
+
 const canLogin = computed(() => loginPhone.value.trim() && loginPassword.value)
 const canRegister = computed(() => registerPhone.value.trim() && registerPassword.value.length >= 6)
+
+function switchTab(tab) {
+  activeTab.value = tab
+  errorText.value = ''
+}
 
 async function handleLogin() {
   if (!canLogin.value) return
@@ -54,154 +65,179 @@ async function handleRegister() {
 
 <template>
   <div class="auth-shell">
-    <!-- 背景装饰 -->
-    <div class="auth-bg-gradient"></div>
-    <div class="auth-particles">
-      <div class="particle particle-1"></div>
-      <div class="particle particle-2"></div>
-      <div class="particle particle-3"></div>
-      <div class="particle particle-4"></div>
-    </div>
-
-    <!-- 登录卡片 -->
-    <div class="auth-card">
-      <!-- Logo区域 -->
-      <div class="auth-header">
-        <div class="auth-logo">
-          <div class="auth-logo-icon" aria-hidden="true">
-            <Sparkles :size="28" :stroke-width="1.75" />
-          </div>
-          <div class="auth-logo-glow"></div>
+    <aside class="auth-brand">
+      <div class="auth-brand-top">
+        <div class="auth-brand-icon" aria-hidden="true">
+          <Shield :size="20" :stroke-width="1.9" />
         </div>
-        <h1 class="auth-title">文档智能系统</h1>
-        <p class="auth-subtitle">智能文档处理 · 开启高效工作</p>
+        <span class="auth-brand-name">识墨文坊</span>
       </div>
 
-      <!-- 错误提示 -->
-      <div v-if="errorText" class="auth-error">
-        <span class="auth-error-icon" aria-hidden="true">
+      <div class="auth-brand-body">
+        <h1 class="auth-brand-title">识墨文坊</h1>
+        <p class="auth-brand-desc">
+          理解、编辑、编排一体。上传 Word / Excel / PDF，用自然语言完成文档全流程处理。
+        </p>
+        <ul class="auth-highlights">
+          <li v-for="item in highlights" :key="item">
+            <span>✓</span>
+            <span>{{ item }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <p class="auth-brand-footer">© 2026 识墨文坊 · 文档智能工坊</p>
+    </aside>
+
+    <div class="auth-form-panel">
+      <div class="auth-form-inner">
+        <div class="auth-form-head">
+          <BrandLogo class="auth-mobile-logo" />
+          <h2>{{ activeTab === 'login' ? '欢迎回来' : '创建账户' }}</h2>
+          <p>识墨文坊 · 理解、编辑、编排一体</p>
+        </div>
+
+        <div v-if="errorText" class="auth-error">
           <AlertCircle :size="18" :stroke-width="2" />
-        </span>
-        <span>{{ errorText }}</span>
-      </div>
-
-      <!-- 登录/注册切换 -->
-      <div class="auth-tabs">
-        <button
-          class="auth-tab"
-          :class="{ active: activeTab === 'login' }"
-          @click="activeTab = 'login'"
-        >
-          登录
-        </button>
-        <button
-          class="auth-tab"
-          :class="{ active: activeTab === 'register' }"
-          @click="activeTab = 'register'"
-        >
-          注册
-        </button>
-        <div
-          class="auth-tab-indicator"
-          :style="{ left: activeTab === 'login' ? '4px' : '50%' }"
-        ></div>
-      </div>
-
-      <!-- 登录表单 -->
-      <form v-if="activeTab === 'login'" class="auth-form" @submit.prevent="handleLogin">
-        <div class="auth-field">
-          <label class="auth-label">
-            手机号
-          </label>
-          <input
-            v-model="loginPhone"
-            type="tel"
-            class="auth-input"
-            placeholder="请输入手机号"
-            autocomplete="tel"
-          />
+          <span>{{ errorText }}</span>
         </div>
 
-        <div class="auth-field">
-          <label class="auth-label">
-            密码
-          </label>
-          <input
-            v-model="loginPassword"
-            type="password"
-            class="auth-input"
-            placeholder="请输入密码"
-            autocomplete="current-password"
-          />
+        <div class="auth-tabs">
+          <button
+            type="button"
+            class="auth-tab"
+            :class="{ active: activeTab === 'login' }"
+            @click="switchTab('login')"
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            class="auth-tab"
+            :class="{ active: activeTab === 'register' }"
+            @click="switchTab('register')"
+          >
+            注册
+          </button>
         </div>
 
-        <button
-          type="submit"
-          class="auth-submit"
-          :class="{ loading }"
-          :disabled="!canLogin || loading"
-        >
-          <span v-if="!loading">登录</span>
-          <span v-else class="auth-spinner"></span>
-        </button>
-      </form>
+        <form v-if="activeTab === 'login'" class="auth-form" @submit.prevent="handleLogin">
+          <div class="auth-field">
+            <label class="auth-label" for="login-phone">手机号</label>
+            <div class="auth-input-wrap">
+              <Smartphone class="auth-input-icon" :size="16" :stroke-width="2" />
+              <input
+                id="login-phone"
+                v-model="loginPhone"
+                type="tel"
+                class="auth-input"
+                placeholder="请输入手机号"
+                autocomplete="tel"
+              />
+            </div>
+          </div>
 
-      <!-- 注册表单 -->
-      <form v-else class="auth-form" @submit.prevent="handleRegister">
-        <div class="auth-field">
-          <label class="auth-label">
-            手机号
-          </label>
-          <input
-            v-model="registerPhone"
-            type="tel"
-            class="auth-input"
-            placeholder="请输入手机号"
-            autocomplete="tel"
-          />
-        </div>
+          <div class="auth-field">
+            <label class="auth-label" for="login-password">密码</label>
+            <div class="auth-input-wrap">
+              <Lock class="auth-input-icon" :size="16" :stroke-width="2" />
+              <input
+                id="login-password"
+                v-model="loginPassword"
+                :type="showPassword ? 'text' : 'password'"
+                class="auth-input"
+                placeholder="请输入密码"
+                autocomplete="current-password"
+              />
+              <button type="button" class="auth-pwd-toggle" @click="showPassword = !showPassword">
+                <EyeOff v-if="showPassword" :size="16" />
+                <Eye v-else :size="16" />
+              </button>
+            </div>
+          </div>
 
-        <div class="auth-field">
-          <label class="auth-label">
-            昵称
-          </label>
-          <input
-            v-model="registerDisplayName"
-            type="text"
-            class="auth-input"
-            placeholder="昵称（可选）"
-            autocomplete="name"
-          />
-        </div>
+          <button type="submit" class="auth-submit" :disabled="!canLogin || loading">
+            <span v-if="!loading">登录</span>
+            <span v-else class="auth-spinner" />
+          </button>
+        </form>
 
-        <div class="auth-field">
-          <label class="auth-label">
-            密码
-          </label>
-          <input
-            v-model="registerPassword"
-            type="password"
-            class="auth-input"
-            placeholder="至少 6 位"
-            autocomplete="new-password"
-          />
-        </div>
+        <form v-else class="auth-form" @submit.prevent="handleRegister">
+          <div class="auth-field">
+            <label class="auth-label" for="register-phone">手机号</label>
+            <div class="auth-input-wrap">
+              <Smartphone class="auth-input-icon" :size="16" :stroke-width="2" />
+              <input
+                id="register-phone"
+                v-model="registerPhone"
+                type="tel"
+                class="auth-input"
+                placeholder="请输入手机号"
+                autocomplete="tel"
+              />
+            </div>
+          </div>
 
-        <button
-          type="submit"
-          class="auth-submit"
-          :class="{ loading }"
-          :disabled="!canRegister || loading"
-        >
-          <span v-if="!loading">注册并登录</span>
-          <span v-else class="auth-spinner"></span>
-        </button>
-      </form>
+          <div class="auth-field">
+            <label class="auth-label" for="register-name">昵称</label>
+            <div class="auth-input-wrap">
+              <input
+                id="register-name"
+                v-model="registerDisplayName"
+                type="text"
+                class="auth-input auth-input--plain"
+                placeholder="昵称（可选）"
+                autocomplete="name"
+              />
+            </div>
+          </div>
 
-      <!-- 底部提示 -->
-      <div class="auth-footer">
-        <span class="auth-footer-text">登录后可使用会话历史与文件持久化能力</span>
+          <div class="auth-field">
+            <label class="auth-label" for="register-password">密码</label>
+            <div class="auth-input-wrap">
+              <Lock class="auth-input-icon" :size="16" :stroke-width="2" />
+              <input
+                id="register-password"
+                v-model="registerPassword"
+                :type="showPassword ? 'text' : 'password'"
+                class="auth-input"
+                placeholder="设置 6 位以上密码"
+                autocomplete="new-password"
+              />
+              <button type="button" class="auth-pwd-toggle" @click="showPassword = !showPassword">
+                <EyeOff v-if="showPassword" :size="16" />
+                <Eye v-else :size="16" />
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" class="auth-submit" :disabled="!canRegister || loading">
+            <span v-if="!loading">注册并登录</span>
+            <span v-else class="auth-spinner" />
+          </button>
+        </form>
+
+        <p class="auth-switch">
+          {{ activeTab === 'login' ? '还没有账户？' : '已有账户？' }}
+          <button type="button" @click="switchTab(activeTab === 'login' ? 'register' : 'login')">
+            {{ activeTab === 'login' ? '立即注册' : '去登录' }}
+          </button>
+        </p>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.auth-mobile-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 1024px) {
+  .auth-mobile-logo {
+    display: none;
+  }
+}
+</style>

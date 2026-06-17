@@ -74,9 +74,10 @@ SUPPORTED_ACTIONS = {
         ],
     },
     "replace_text": {
-        "keywords": ["替换", "查找替换", "批量替换", "replace text", "统一换成", "统一改成", "都换成"],
+        "keywords": ["替换", "查找替换", "批量替换", "replace text", "统一换成", "统一改成", "都换成", "替换成"],
         "patterns": [
-            r"(?:将|把).+?替换为.+",
+            r"(?:将|把).+?替换(?:为|成).+",
+            r"(?:将|把).+?替换成.+",
             r"查找.+替换.+",
             r"批量替换",
             r"(?:将|把).+?(?:统一)?换成.+",
@@ -763,8 +764,8 @@ def _normalize_action_params(action_type: str, params: Dict[str, Any], instructi
             fallback_find, fallback_replace = _extract_replace_pair(instruction)
             find_text = find_text or fallback_find
             replace_text = replace_text or fallback_replace
-        normalized["find"] = str(find_text)
-        normalized["replace"] = str(replace_text)
+        normalized["find"] = _clean_replace_find_text(str(find_text))
+        normalized["replace"] = _clean_replace_target_text(str(replace_text))
         return normalized
 
     if action_type == "unify_style":
@@ -1617,32 +1618,92 @@ def _extract_xlsx_border_style(text: str) -> str:
     return "thin"
 
 
+def _clean_replace_find_text(text: str) -> str:
+    """去掉查找文本里常见的范围/口语前缀，避免「文档中的.NET」无法命中正文。"""
+    s = (text or "").strip().strip("\"'“”‘’")
+    if not s:
+        return s
+
+    scope_prefixes = (
+        "这篇文档里",
+        "该文档中",
+        "这个文档里",
+        "文档里面",
+        "文档里",
+        "文档中",
+        "文档内",
+        "文件里",
+        "文件中",
+        "正文里",
+        "正文中",
+        "文里面",
+        "文里",
+        "文中",
+        "文内",
+        "内容里",
+        "内容中",
+        "里面",
+        "其中",
+        "全文里",
+        "全文中",
+        "出现的",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for prefix in scope_prefixes:
+            if s.startswith(prefix):
+                s = s[len(prefix) :].lstrip()
+                changed = True
+                break
+        if re.match(r"^(?:这|该|此|那)(?:篇|个)?", s):
+            s = re.sub(r"^(?:这|该|此|那)(?:篇|个)?", "", s).lstrip()
+            changed = True
+
+    s = re.sub(r"^(?:里|中|内|的)+", "", s).lstrip()
+    s = re.sub(r"(?:里|中|内)?的字$", "", s).strip()
+    s = re.sub(r"的字$", "", s).strip()
+    return s.strip("\"'“”‘’")
+
+
+def _clean_replace_target_text(text: str) -> str:
+    s = (text or "").strip().strip("\"'“”‘’")
+    s = re.sub(r"(?:进行替换|替换)$", "", s).strip()
+    return s.strip("\"'“”‘’")
+
+
 def _extract_replace_pair(text: str) -> tuple[str, str]:
     # 优先使用引号包裹内容，避免复合指令把后续子句吞进替换文本。
     quoted_patterns = [
-        r"(?:将|把)[^“\"']*[“\"'](.+?)[”\"'][^，。,；;\n]*替换为\s*[“\"'](.+?)[”\"']",
+        r"(?:将|把)[^“\"']*[“\"'](.+?)[”\"'][^，。,；;\n]*替换(?:为|成)\s*[“\"'](.+?)[”\"']",
+        r"(?:将|把)[^“\"']*[“\"'](.+?)[”\"'][^，。,；;\n]*替换成\s*[“\"'](.+?)[”\"']",
         r"查找\s*[“\"'](.+?)[”\"']\s*替换\s*[“\"'](.+?)[”\"']",
         r"(?:把)?\s*[“\"'](.+?)[”\"']\s*改成\s*[“\"'](.+?)[”\"']",
     ]
     for p in quoted_patterns:
         m = re.search(p, text)
         if m:
-            return m.group(1).strip(), m.group(2).strip()
+            return _clean_replace_find_text(m.group(1)), _clean_replace_target_text(m.group(2))
 
     # 非引号场景：替换后的文本只截取到首个分隔符（逗号、分号、句号、换行）。
+    # 「替换成」须排在「换成」之前，避免把「小明替换成」误解析为 find=小明替。
     patterns = [
-        r"(?:将|把)\s*([^，。,；;\n]+?)\s*替换为\s*([^，。,；;\n]+)",
+        r"(?:将|把)\s*(?:文档|文件|正文|文中|文内|文里|内容)?(?:中|里|内)?\s*([^，。,；;\n]+?)\s*替换成\s*([^，。,；;\n]+)",
+        r"(?:将|把)\s*([^，。,；;\n]+?)\s*替换成\s*([^，。,；;\n]+)",
+        r"(?:将|把)\s*(?:文档|文件|正文|文中|文内|文里|内容)?(?:中|里|内)?\s*([^，。,；;\n]+?)\s*替换(?:为|成)\s*([^，。,；;\n]+)",
+        r"(?:将|把)\s*([^，。,；;\n]+?)\s*替换(?:为|成)\s*([^，。,；;\n]+)",
         r"(?:将|把)\s*([^，。,；;\n]+?)\s*(?:统一)?换成\s*([^，。,；;\n]+)",
         r"查找\s*([^，。,；;\n]+?)\s*替换\s*([^，。,；;\n]+)",
         r"(?:把)?\s*([^，。,；;\n]+?)\s*改成\s*([^，。,；;\n]+)",
+        r"(?:把)?\s*([^，。,；;\n]+?)\s*改为\s*([^，。,；;\n]+)",
     ]
     for p in patterns:
         m = re.search(p, text)
         if m:
-            find_text = m.group(1).strip().strip("\"'“”")
-            replace_text = m.group(2).strip().strip("\"'“”")
-            find_text = re.sub(r"^(?:文里(?:出现的)?|文中(?:出现的)?|文内(?:出现的)?|出现的)", "", find_text).strip("\"'“”")
-            return find_text, replace_text
+            find_text = _clean_replace_find_text(m.group(1))
+            replace_text = _clean_replace_target_text(m.group(2))
+            if find_text and replace_text:
+                return find_text, replace_text
     return "", ""
 
 
@@ -1699,8 +1760,15 @@ def _find_action_contexts(action_type: str, rule: Dict[str, Any], segments: List
 
 def _segment_matches_action(action_type: str, rule: Dict[str, Any], seg: str) -> bool:
     if action_type == "replace_text":
-        # 仅当出现明确替换语义时触发，避免“改为宋体/改为斜体”误识别成文本替换。
-        if not re.search(r"替换|查找", seg):
+        has_replace_verb = bool(re.search(r"替换|查找|换成|改为|改成", seg))
+        if not has_replace_verb:
+            return False
+        # 避免「改为宋体/改成斜体」误入文本替换。
+        if re.search(r"改为|改成|换成", seg) and re.search(
+            r"宋体|黑体|楷体|仿宋|微软雅黑|粗体|斜体|下划线|字号|字体|颜色",
+            seg,
+            flags=re.IGNORECASE,
+        ) and not re.search(r"替换|查找", seg):
             return False
 
     if action_type == "insert_footer_text":

@@ -59,22 +59,22 @@ htmlcov/
 /output
 
 
+# Temporary / local runtime artifacts（勿提交）
+temp/
+src/output/
+src/temp/
+workspace/library/
+workspace/uploads/
+src/workspace/uploads/
+temp/storage_cache/
+src/temp/oss_cache/
+src/temp/file_cache/
+
 # 忽略前端依赖
 frontend/node_modules/
 extended-frontend/node_modules/
 
-# 再次确保 .env 文件被忽略
-.env
 tests/测试集
-src/workspace/uploads/
-workspace/uploads/
-temp/storage_cache/
-src/output/*.json
-src/output/*.xlsx
-src/temp/oss_cache/
-src/temp/file_cache/
-
-
 企业要求.md
 
 # Electron 桌面版为独立 Git 仓库，勿纳入主项目

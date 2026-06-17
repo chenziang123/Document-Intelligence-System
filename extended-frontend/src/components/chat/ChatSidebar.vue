@@ -1,14 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { Pencil, Trash2, Plus, ChevronLeft } from 'lucide-vue-next'
+import { Pencil, Trash2, Plus } from 'lucide-vue-next'
 import { useSessionStore } from '../../stores/sessionStore'
-
-const props = defineProps({
-  collapsed: {
-    type: Boolean,
-    default: false
-  }
-})
 
 const sessionStore = useSessionStore()
 
@@ -93,13 +86,7 @@ async function saveRename(session) {
 </script>
 
 <template>
-  <aside class="chat-sidebar" :class="{ collapsed: props.collapsed }">
-    <!-- 收起按钮 - 在侧边栏内部 -->
-    <button v-if="!props.collapsed" class="sidebar-toggle" @click="sessionStore.toggleSidebar" title="收起侧边栏">
-      <ChevronLeft :size="18" :stroke-width="2" aria-hidden="true" />
-    </button>
-
-    <!-- Header -->
+  <aside class="chat-sidebar">
     <div class="chat-sidebar-header">
       <button class="new-session-btn" @click="sessionStore.createSession">
         <Plus :size="18" :stroke-width="2" aria-hidden="true" />
@@ -107,7 +94,6 @@ async function saveRename(session) {
       </button>
     </div>
 
-    <!-- Search -->
     <div class="chat-search">
       <input
         type="text"
@@ -117,9 +103,7 @@ async function saveRename(session) {
       />
     </div>
 
-    <!-- Session List -->
     <div class="session-list">
-      <!-- Loading state -->
       <div
         v-if="sessionStore.isInitializing && sessionStore.sessions.length === 0"
         class="session-empty"
@@ -138,7 +122,6 @@ async function saveRename(session) {
             @click="sessionStore.selectSession(session.session_id)"
           >
             <div class="session-info">
-              <!-- 编辑模式 -->
               <div v-if="editingSessionId === session.session_id" class="session-edit" @click.stop>
                 <input
                   v-model="editingTitle"
@@ -151,13 +134,11 @@ async function saveRename(session) {
                   autofocus
                 />
               </div>
-              <!-- 显示模式 -->
               <template v-else>
                 <span class="session-name">{{ session.title }}</span>
                 <span class="session-time">{{ sessionStore.formatTime(session.updated_at) }}</span>
               </template>
             </div>
-            <!-- 操作按钮 -->
             <div class="session-actions" @click.stop>
               <button
                 class="session-action-btn"
@@ -180,7 +161,6 @@ async function saveRename(session) {
         </div>
       </template>
 
-      <!-- Empty state -->
       <div v-if="sortedSessions.length === 0" class="session-empty">
         暂无会话，点击上方按钮创建
       </div>

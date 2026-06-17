@@ -1,5 +1,5 @@
 """
-文档智能系统 - 主程序入口
+识墨文坊 - 主程序入口
 
 整体工作流:
 1. 会话开始 用户可以上传数据源 用户可以上传模板 此时为默认对话模式
@@ -69,7 +69,7 @@ def main():
     logger = get_logger("main")
 
     logger.info("=" * 60)
-    logger.info("文档智能系统启动")
+    logger.info("识墨文坊启动")
     logger.info("=" * 60)
 
     try:

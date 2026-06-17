@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from psycopg.types.json import Json
+import uuid
+
+from db.mysql_compat import Json
 
 from config import SystemConfig, get_config
 from db.connection import db_connection
@@ -32,20 +34,21 @@ def insert_fill_report(
         errors = []
     with db_connection(cfg) as conn:
         with conn.transaction():
+            report_id = str(uuid.uuid4())
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO fill_reports (
-                        task_uuid, schema_version, template_id, output_file,
+                        id, task_uuid, schema_version, template_id, output_file,
                         filled_fields, skipped_fields, warnings, errors
                     )
                     VALUES (
-                        %s::uuid, %s, %s, %s::jsonb,
-                        %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s
                     )
-                    RETURNING id::text
                     """,
                     (
+                        report_id,
                         task_uuid,
                         str(payload["schema_version"]),
                         payload.get("template_id"),
@@ -56,7 +59,7 @@ def insert_fill_report(
                         Json(errors),
                     ),
                 )
-                return str(cur.fetchone()[0])
+                return report_id
 
 
 def insert_agent_log(
@@ -73,16 +76,17 @@ def insert_agent_log(
         extras = {}
     with db_connection(cfg) as conn:
         with conn.transaction():
+            log_id = str(uuid.uuid4())
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO agent_execution_logs (
-                        task_uuid, action, summary, ops_count, rollback_id, detail_ref, extras
+                        id, task_uuid, action, summary, ops_count, rollback_id, detail_ref, extras
                     )
-                    VALUES (%s::uuid, %s, %s, %s, %s, %s, %s::jsonb)
-                    RETURNING id::text
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
+                        log_id,
                         task_uuid,
                         str(payload["action"]),
                         str(payload["summary"]),
@@ -92,7 +96,7 @@ def insert_agent_log(
                         Json(extras),
                     ),
                 )
-                return str(cur.fetchone()[0])
+                return log_id
 
 
 def insert_document_asset(
@@ -108,19 +112,20 @@ def insert_document_asset(
     meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     with db_connection(cfg) as conn:
         with conn.transaction():
+            asset_id = str(uuid.uuid4())
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO document_assets (
-                        task_uuid, role, storage_key, local_path, file_name, file_hash,
+                        id, task_uuid, role, storage_key, local_path, file_name, file_hash,
                         mime_type, byte_size, page_count, metadata
                     )
                     VALUES (
-                        %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    RETURNING id::text
                     """,
                     (
+                        asset_id,
                         task_uuid,
                         role,
                         payload.get("storage_key"),
@@ -133,4 +138,4 @@ def insert_document_asset(
                         Json(meta),
                     ),
                 )
-                return str(cur.fetchone()[0])
+                return asset_id

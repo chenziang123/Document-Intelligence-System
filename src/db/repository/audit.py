@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from psycopg.types.json import Json
+import uuid
+
+from db.mysql_compat import Json
 
 from config import SystemConfig, get_config
 from db.connection import db_connection
@@ -21,16 +23,16 @@ def insert_audit_log_conn(
 ) -> str:
     """在同一连接/事务内写入 audit_logs。"""
     pl = payload or {}
+    log_id = str(uuid.uuid4())
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO audit_logs (actor, subject_type, subject_id, event, payload)
-            VALUES (%s, %s, %s, %s, %s::jsonb)
-            RETURNING id::text
+            INSERT INTO audit_logs (id, actor, subject_type, subject_id, event, payload)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (actor, subject_type, subject_id, event, Json(pl)),
+            (log_id, actor, subject_type, subject_id, event, Json(pl)),
         )
-        return str(cur.fetchone()[0])
+        return log_id
 
 
 def insert_task_step(
@@ -50,20 +52,21 @@ def insert_task_step(
         started_at, completed_at = now, None
     else:
         started_at, completed_at = now, now
+    step_id = str(uuid.uuid4())
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO task_steps (
-                task_uuid, step_name, step_order, status, detail,
+                id, task_uuid, step_name, step_order, status, detail,
                 error_code, error_message, started_at, completed_at
             )
             VALUES (
-                %s::uuid, %s, %s, %s, %s::jsonb,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s
             )
-            RETURNING id::text
             """,
             (
+                step_id,
                 task_uuid,
                 step_name,
                 step_order,
@@ -75,7 +78,7 @@ def insert_task_step(
                 completed_at,
             ),
         )
-        return str(cur.fetchone()[0])
+        return step_id
 
 
 def insert_audit_log(

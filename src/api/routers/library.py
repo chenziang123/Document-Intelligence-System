@@ -31,14 +31,13 @@ from db.library_repository import (
     get_library_docs,
     get_library_space_by_id,
     get_library_spaces,
+    update_library_doc,
 )
 
 
 router = APIRouter(prefix="/api/library", tags=["文档库管理"])
 
-# 文档库文件上传目录
-LIBRARY_UPLOAD_DIR = Path("workspace/library")
-LIBRARY_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+from utils.storage_paths import library_upload_dir, resolve_local_storage_path
 
 
 # ---------------------------------------------------------------------------
@@ -300,11 +299,12 @@ async def upload_doc(
     else:
         # 本地存储
         safe_name = f"{file_hash}_{file_name}"
-        file_path = LIBRARY_UPLOAD_DIR / space_id / safe_name
+        upload_dir = library_upload_dir(cfg)
+        file_path = upload_dir / space_id / safe_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "wb") as f:
             f.write(content)
-        storage_key = str(file_path)
+        storage_key = str(file_path.resolve())
 
     doc = add_library_doc(
         space_id=space_id,
@@ -317,6 +317,47 @@ async def upload_doc(
         blob_url=storage_key,
     )
     return _doc_to_dict(doc)
+
+
+@router.put("/docs/{doc_id}", response_model=DocItem)
+async def update_doc(
+    doc_id: str,
+    body: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None),
+):
+    """重命名文档（仅更新显示名称，不移动存储文件）"""
+    cfg = load_config()
+    user = _resolve_user(authorization, cfg)
+
+    doc = get_library_doc_by_id(doc_id, config=cfg, user_id=user.id if user else None)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    file_name = (body.get("file_name") or "").strip()
+    if not file_name:
+        raise HTTPException(status_code=400, detail="文档名称不能为空")
+    if "/" in file_name or "\\" in file_name or file_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="文档名称不能包含路径分隔符")
+    if len(file_name) > 255:
+        raise HTTPException(status_code=400, detail="文档名称过长（最多 255 个字符）")
+    if file_name == doc.file_name:
+        return _doc_to_dict(doc)
+
+    space_docs = get_library_docs(
+        doc.space_id, config=cfg, user_id=user.id if user else None
+    )
+    if any(d.file_name == file_name and d.id != doc_id for d in space_docs):
+        raise HTTPException(status_code=400, detail="该空间已存在同名文档")
+
+    result = update_library_doc(
+        doc_id=doc_id,
+        file_name=file_name,
+        config=cfg,
+        user_id=user.id if user else None,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return _doc_to_dict(result)
 
 
 @router.delete("/docs/{doc_id}")
@@ -392,17 +433,16 @@ async def download_doc(
         except Exception as exc:
             raise HTTPException(status_code=404, detail=f"文件不存在: {exc}")
 
-    # 其次尝试 blob_url 作为本地路径
+    # 其次尝试 blob_url / storage_key 本地路径（兼容相对路径与 src/ 启动）
     if not file_path and blob_url:
-        local_path = Path(blob_url)
-        if local_path.exists():
-            file_path = local_path
+        local_path = resolve_local_storage_path(blob_url, config=cfg)
+        if local_path:
+            file_path = str(local_path)
 
-    # 最后尝试 storage_key 作为本地绝对路径
     if not file_path and storage_key:
-        local_path = Path(storage_key)
-        if local_path.exists():
-            file_path = local_path
+        local_path = resolve_local_storage_path(storage_key, config=cfg)
+        if local_path:
+            file_path = str(local_path)
 
     if not file_path:
         raise HTTPException(status_code=404, detail="文件不存在")

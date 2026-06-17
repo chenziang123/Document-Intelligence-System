@@ -1,66 +1,72 @@
 <script setup>
-import { Bell, Settings, FileText } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Bell, Settings, FolderClosed, MessagesSquare, Workflow } from 'lucide-vue-next'
 import { useTabStore } from '../stores/tabStore'
 import { useAuthStore } from '../stores/authStore'
-import { useSessionStore } from '../stores/sessionStore'
+import BrandLogo from './BrandLogo.vue'
+import UserProfilePanel from './UserProfilePanel.vue'
 
 const tabStore = useTabStore()
 const authStore = useAuthStore()
-const sessionStore = useSessionStore()
+const showUserProfile = ref(false)
+
+const navItems = [
+  { id: 'library', label: '文档库', icon: FolderClosed },
+  { id: 'chat', label: '智能对话', icon: MessagesSquare },
+  { id: 'workflow', label: '工作流编排', icon: Workflow },
+]
 
 function handleTabClick(tabId) {
   tabStore.switchTab(tabId)
 }
 
-async function handleLogout() {
-  await sessionStore.disconnectWebSocket()
-  await authStore.logout()
+function openUserProfile() {
+  showUserProfile.value = true
+}
+
+function closeUserProfile() {
+  showUserProfile.value = false
 }
 </script>
 
 <template>
-  <header class="header">
-    <div class="header-left">
-      <div class="logo">
-        <div class="logo-icon" aria-hidden="true">
-          <FileText :size="20" :stroke-width="2" />
-        </div>
-        <span>文档智能系统</span>
-      </div>
+  <aside class="app-nav-rail" aria-label="全局导航">
+    <button type="button" class="nav-rail-logo" @click="handleTabClick('library')" title="识墨文坊">
+      <BrandLogo :show-text="false" />
+    </button>
 
-      <nav class="main-nav">
-        <button
-          v-for="tab in tabStore.tabs"
-          :key="tab.id"
-          class="nav-tab"
-          :class="{ active: tabStore.currentTab === tab.id }"
-          :data-tab="tab.id"
-          @click="handleTabClick(tab.id)"
-        >
-          <span>{{ tab.label }}</span>
-        </button>
-      </nav>
-    </div>
-
-    <div class="header-right">
-      <button class="header-btn" type="button" title="通知" aria-label="通知">
-        <Bell :size="18" :stroke-width="2" aria-hidden="true" />
+    <nav class="nav-rail-menu">
+      <button
+        v-for="item in navItems"
+        :key="item.id"
+        type="button"
+        class="nav-rail-item"
+        :class="{ active: tabStore.currentTab === item.id }"
+        :title="item.label"
+        @click="handleTabClick(item.id)"
+      >
+        <component :is="item.icon" :size="22" :stroke-width="1.9" aria-hidden="true" />
+        <span>{{ item.label }}</span>
       </button>
-      <button class="header-btn" type="button" title="设置" aria-label="设置">
-        <Settings :size="18" :stroke-width="2" aria-hidden="true" />
-      </button>
+    </nav>
 
-      <div class="header-user">
-        <div class="user-info">
-          <span class="user-name">{{ authStore.userDisplayName }}</span>
-          <button type="button" class="logout-btn" @click="handleLogout" title="退出登录">
-            退出
-          </button>
-        </div>
-        <div class="user-avatar" :title="authStore.userDisplayName">
-          {{ authStore.userAvatar }}
-        </div>
-      </div>
+    <div class="nav-rail-footer">
+      <button type="button" class="nav-rail-tool" title="通知" aria-label="通知">
+        <Bell :size="20" :stroke-width="1.9" />
+      </button>
+      <button type="button" class="nav-rail-tool" title="设置" aria-label="设置">
+        <Settings :size="20" :stroke-width="1.9" />
+      </button>
+      <button
+        type="button"
+        class="nav-rail-avatar"
+        :title="`${authStore.userDisplayName} · 点击查看用户信息`"
+        @click="openUserProfile"
+      >
+        {{ authStore.userAvatar }}
+      </button>
     </div>
-  </header>
+  </aside>
+
+  <UserProfilePanel :visible="showUserProfile" @close="closeUserProfile" />
 </template>

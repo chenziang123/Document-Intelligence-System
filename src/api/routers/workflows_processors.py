@@ -3,6 +3,7 @@
 包括翻译、提取、分析、增强、转换、分割等功能
 """
 import json
+import re
 from typing import Any, Dict, List, Optional
 from config import SystemConfig
 from utils.logger import get_logger
@@ -121,6 +122,174 @@ def _split_config_text(value: Any) -> List[str]:
     return [x.strip() for x in text.split("\n") if x.strip()]
 
 
+def _extract_table_rows(content: str) -> tuple[List[str], List[List[str]]]:
+    """从 TSV 或带【完整数据】标记的 Excel 文本中提取表头与数据行。"""
+    lines: List[str] = []
+    for raw in (content or "").splitlines():
+        line = raw.rstrip("\r\n")
+        if not line.strip():
+            continue
+        if line.startswith("===") or line.startswith("【") or line.startswith("[..."):
+            continue
+        if line.startswith("|") and line.endswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if cells and all(c and set(c) <= {"-", ":"} for c in cells):
+                continue
+            lines.append("\t".join(cells))
+            continue
+        if "\t" in line:
+            lines.append(line)
+            continue
+        if "," in line:
+            try:
+                import csv
+                from io import StringIO
+                row = next(csv.reader(StringIO(line)))
+                if row:
+                    lines.append("\t".join(row))
+            except Exception:
+                pass
+
+    if not lines:
+        return [], []
+
+    headers = [h.strip() for h in lines[0].split("\t")]
+    rows: List[List[str]] = []
+    for line in lines[1:]:
+        cells = line.split("\t")
+        if len(cells) < len(headers):
+            cells.extend([""] * (len(headers) - len(cells)))
+        elif len(cells) > len(headers):
+            cells = cells[: len(headers)]
+        rows.append([c.strip() for c in cells])
+    return headers, rows
+
+
+_NULLISH_CELL_VALUES = frozenset(
+    {"null", "none", "n/a", "na", "nil", "undefined", "-", "—", "nan", "#n/a"}
+)
+
+
+def _is_nullish_cell(val: Any) -> bool:
+    """空单元格或上游填充的 null 占位符。"""
+    text = str(val or "").strip()
+    if not text:
+        return True
+    return text.lower() in _NULLISH_CELL_VALUES
+
+
+def _resolve_column_indices(headers: List[str], column_names: List[str]) -> List[int]:
+    indices: List[int] = []
+    for col_name in column_names:
+        name = str(col_name or "").strip()
+        if not name:
+            continue
+        idx = next((i for i, h in enumerate(headers) if h.strip() == name), None)
+        if idx is None:
+            idx = next((i for i, h in enumerate(headers) if name in h), None)
+        if idx is not None and idx not in indices:
+            indices.append(idx)
+    return indices
+
+
+def _data_process_fill_null_table(content: str, config_values: Dict) -> Optional[str]:
+    """将指定列的空值统一填充为占位符（默认 null）。"""
+    headers, rows = _extract_table_rows(content)
+    if not headers:
+        return None
+
+    fill_cols = _split_config_text(config_values.get("fillColumns"))
+    raw_fill = config_values.get("fillValue")
+    fill_value = "null" if raw_fill is None else str(raw_fill).strip()
+
+    col_indices = _resolve_column_indices(headers, fill_cols) if fill_cols else list(range(len(headers)))
+    if not col_indices:
+        return None
+
+    new_rows: List[List[str]] = []
+    for row in rows:
+        new_row = list(row)
+        if len(new_row) < len(headers):
+            new_row.extend([""] * (len(headers) - len(new_row)))
+        for idx in col_indices:
+            if _is_nullish_cell(new_row[idx]):
+                new_row[idx] = fill_value
+        new_rows.append(new_row)
+
+    out = ["\t".join(headers)]
+    out.extend("\t".join(row) for row in new_rows)
+    return "\n".join(out)
+
+
+def _config_sort_null_as_zero(config_values: Dict) -> bool:
+    """补充说明含「按 0 / 当作 0」时，null 占位符按 0 参与排序。"""
+    if str(config_values.get("sortNullAsZero") or "").lower() in ("true", "1", "yes", "on"):
+        return True
+    prompt = str(config_values.get("prompt") or "")
+    return any(token in prompt for token in ("按0", "当作0", "视为0", "按照0", "当成0", "当作 0", "按照 0"))
+
+
+def _build_sort_key(val: str, *, null_as_zero: bool) -> tuple:
+    """生成可比较的排序键，避免 float 与 str 直接比较。"""
+    text = str(val or "").strip()
+    if _is_nullish_cell(text):
+        if null_as_zero:
+            return (0, 0.0, "")
+        return (2, 0.0, "")
+    try:
+        return (0, float(text), "")
+    except (ValueError, TypeError):
+        return (1, 0.0, text.casefold())
+
+
+def _data_process_sort_table(content: str, config_values: Dict) -> Optional[str]:
+    """按列对表格做程序排序，输出纯 TSV（表头 + 数据行）。"""
+    headers, rows = _extract_table_rows(content)
+    if not headers or not rows:
+        return None
+
+    sort_col = str(config_values.get("sortColumn") or "").strip()
+    if not sort_col:
+        return None
+
+    col_idx = next((i for i, h in enumerate(headers) if h.strip() == sort_col), None)
+    if col_idx is None:
+        col_idx = next((i for i, h in enumerate(headers) if sort_col in h), None)
+    if col_idx is None:
+        return None
+
+    sort_order = str(config_values.get("sortOrder") or "asc").strip().lower()
+    reverse = sort_order == "desc"
+    null_as_zero = _config_sort_null_as_zero(config_values)
+
+    def _cell_value(row: List[str]) -> str:
+        if col_idx >= len(row):
+            return ""
+        return str(row[col_idx]).strip()
+
+    def _data_sort_key(row: List[str]) -> tuple:
+        key = _build_sort_key(_cell_value(row), null_as_zero=null_as_zero)
+        if reverse and key[0] == 0:
+            return (key[0], -key[1], key[2])
+        return key
+
+    if null_as_zero:
+        sorted_rows = sorted(rows, key=_data_sort_key)
+    else:
+        data_rows: List[List[str]] = []
+        null_rows: List[List[str]] = []
+        for row in rows:
+            if _is_nullish_cell(_cell_value(row)):
+                null_rows.append(row)
+            else:
+                data_rows.append(row)
+        data_rows.sort(key=_data_sort_key)
+        sorted_rows = data_rows + null_rows
+    out = ["\t".join(headers)]
+    out.extend("\t".join(row) for row in sorted_rows)
+    return "\n".join(out)
+
+
 def _chat_or_keep(content: str, prompt: str, task_name: str, temperature: float = 0.3) -> str:
     service = _get_llm_service()
     if not service:
@@ -181,6 +350,16 @@ def _data_process_content(content: str, file_name: str, config_values: Dict) -> 
     if missing:
         raise ValueError(f"数据处理节点缺少配置：{', '.join(missing)}")
 
+    if process_kind == "sort":
+        sorted_table = _data_process_sort_table(content, config_values)
+        if sorted_table:
+            return sorted_table
+
+    if process_kind == "fill_null":
+        filled_table = _data_process_fill_null_table(content, config_values)
+        if filled_table:
+            return filled_table
+
     text = _text_sample(content)
     prompt = (
         "请按配置处理下方表格或结构化文本。优先保持输入的数据格式；如果无法保留原格式，输出Markdown表格。\n"
@@ -202,10 +381,27 @@ def _data_clean_content(content: str, file_name: str, config_values: Dict) -> Op
 
     result = content
     if "trim_spaces" in rules:
-        result = "\n".join(line.strip() for line in result.splitlines())
+        trimmed_lines = []
+        for raw in result.splitlines():
+            line = raw.rstrip("\r\n")
+            if not line.strip():
+                continue
+            if "\t" in line:
+                trimmed_lines.append("\t".join(c.strip() for c in line.split("\t")))
+            else:
+                trimmed_lines.append(line.strip())
+        result = "\n".join(trimmed_lines)
+
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    if custom_prompt and ("null" in custom_prompt.lower() or "空值" in custom_prompt):
+        filled = _data_process_fill_null_table(
+            result,
+            {"fillColumns": "", "fillValue": "null"},
+        )
+        if filled:
+            result = filled
 
     complex_rules = [r for r in rules if r != "trim_spaces"]
-    custom_prompt = str(config_values.get("prompt") or "").strip()
     if not complex_rules and not custom_prompt:
         return result
 
@@ -576,6 +772,69 @@ def _split_document_content(content: str, file_name: str, config_values: Dict) -
     return content
 
 
+def _parse_keywords_from_highlight(response: str) -> List[str]:
+    """从关键词高亮输出中解析关键词列表。"""
+    text = str(response or "")
+    if "【关键词】" not in text:
+        return []
+    segment = text.split("【关键词】", 1)[1]
+    if "【高亮结果】" in segment:
+        segment = segment.split("【高亮结果】", 1)[0]
+    keywords: List[str] = []
+    for raw in segment.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[-*•\d.、\s]+", "", line).strip()
+        if line:
+            keywords.append(line)
+    return keywords
+
+
+def _extract_highlight_body(response: str) -> str:
+    text = str(response or "").strip()
+    if "【高亮结果】" in text:
+        return text.split("【高亮结果】", 1)[1].strip()
+    return text
+
+
+def _apply_keyword_markers(text: str, keywords: List[str], marker: str = "**") -> str:
+    """在原文中标注关键词（长词优先，避免短词误切）。"""
+    result = text
+    ordered = sorted({k.strip() for k in keywords if k and k.strip()}, key=len, reverse=True)
+    for kw in ordered:
+        if marker and f"{marker}{kw}{marker}" in result:
+            continue
+        result = result.replace(kw, f"{marker}{kw}{marker}")
+    return result
+
+
+def _normalize_highlight_markers(text: str, marker: str) -> str:
+    """将自定义标记统一为 **，便于 Markdown/PDF 渲染。"""
+    if not marker or marker == "**":
+        return text
+    escaped = re.escape(marker)
+    return re.sub(rf"{escaped}(.+?){escaped}", r"**\1**", text)
+
+
+def _finalize_keyword_highlight(source_text: str, response: str, marker: str) -> str:
+    """补全高亮标记并规范输出结构。"""
+    raw = str(response or "").strip() or source_text
+    keywords = _parse_keywords_from_highlight(raw)
+    body = _extract_highlight_body(raw)
+    body = _normalize_highlight_markers(body, marker)
+
+    if keywords and "**" not in body and (not marker or marker not in body):
+        body = _apply_keyword_markers(source_text, keywords, "**")
+    elif marker and marker != "**":
+        body = _normalize_highlight_markers(body, marker)
+
+    if keywords:
+        kw_lines = "\n".join(f"- {k}" for k in keywords)
+        return f"【关键词】\n{kw_lines}\n\n【高亮结果】\n{body}"
+    return body
+
+
 def _keyword_highlight_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
     """提取关键词并在文本中标注。"""
     service = _get_llm_service()
@@ -605,7 +864,8 @@ def _keyword_highlight_content(content: str, file_name: str, config_values: Dict
         )
     try:
         response = service.chat(messages=[{"role": "user", "content": prompt}], temperature=0.3, strip_markdown_output=False)
-        return response if isinstance(response, str) else str(response)
+        result = response if isinstance(response, str) else str(response)
+        return _finalize_keyword_highlight(text, result, marker)
     except Exception as e:
         logger.error(f"关键词高亮失败: {e}")
         return content

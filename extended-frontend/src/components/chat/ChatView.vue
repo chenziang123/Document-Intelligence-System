@@ -3,9 +3,10 @@ defineOptions({ name: 'ChatView' })
 
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { marked } from 'marked'
-import { MessagesSquare, Paperclip, Send, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { MessagesSquare, Paperclip, Send, ChevronDown, ChevronLeft, ChevronRight, Sparkles } from 'lucide-vue-next'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useFileStore } from '../../stores/fileStore'
+import { useAuthStore } from '../../stores/authStore'
 import ChatSidebar from './ChatSidebar.vue'
 
 // 配置 marked
@@ -16,6 +17,7 @@ marked.setOptions({
 
 const sessionStore = useSessionStore()
 const fileStore = useFileStore()
+const authStore = useAuthStore()
 
 const messagesContainer = ref(null)
 const inputText = ref('')
@@ -38,13 +40,6 @@ const modeLabels = {
 function switchChatMode(mode) {
   sessionStore.switchMode(mode)
 }
-
-const quickActions = [
-  { text: '分析文档', prompt: '分析这份文档的核心内容' },
-  { text: '提取信息', prompt: '提取文档中的关键信息' },
-  { text: '翻译内容', prompt: '帮我翻译这篇论文' },
-  { text: '使用工作流', action: 'workflow' }
-]
 
 function scrollToBottom() {
   nextTick(() => {
@@ -75,13 +70,6 @@ onUnmounted(() => {
   sessionStore.disconnectWebSocket()
 })
 
-function insertPrompt(prompt) {
-  if (prompt.action) {
-    const tabStore = window.__tabStore__
-    if (tabStore) tabStore.switchTab(prompt.action)
-  }
-}
-
 function formatTime(isoString) {
   if (!isoString) return ''
   const dt = new Date(isoString)
@@ -101,7 +89,8 @@ function renderMarkdown(content) {
 function autoResize() {
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
-    textareaRef.value.style.height = Math.min(textareaRef.value.scrollHeight, 200) + 'px'
+    const h = Math.max(56, Math.min(textareaRef.value.scrollHeight, 200))
+    textareaRef.value.style.height = `${h}px`
   }
 }
 
@@ -119,7 +108,7 @@ async function sendMessage() {
   await sessionStore.sendMessage(text, sessionStore.currentMode)
   inputText.value = ''
   if (textareaRef.value) {
-    textareaRef.value.style.height = 'auto'
+    textareaRef.value.style.height = '56px'
   }
 }
 
@@ -132,19 +121,26 @@ function handleDragLeave() {
   isDragover.value = false
 }
 
+function addChatFile(file) {
+  const ext = (file.name || '').split('.').pop()?.toLowerCase() || ''
+  // PDF/文档类默认作为数据文件，避免误传到「模板」导致后端读不到
+  const type = ['pdf', 'doc', 'docx', 'txt', 'md'].includes(ext) ? 'data' : fileStore.currentFileType
+  fileStore.addFile(type, file)
+}
+
 function handleDrop(e) {
   e.preventDefault()
   isDragover.value = false
   const files = Array.from(e.dataTransfer.files)
   if (files.length > 0) {
-    files.forEach(file => fileStore.addFile(fileStore.currentFileType, file))
+    files.forEach(file => addChatFile(file))
   }
 }
 
 function handleFileInput(e) {
   const files = Array.from(e.target.files)
   if (files.length > 0) {
-    files.forEach(file => fileStore.addFile(fileStore.currentFileType, file))
+    files.forEach(file => addChatFile(file))
   }
 }
 
@@ -385,29 +381,38 @@ function userMessageAttachments(msg) {
 </script>
 
 <template>
-  <div class="chat-view">
-    <ChatSidebar :collapsed="sessionStore.sidebarCollapsed" />
-    <div class="chat-main" :class="{ 'sidebar-collapsed': sessionStore.sidebarCollapsed }">
-      <!-- 展开按钮 - 在右侧始终可见 -->
-      <button v-if="sessionStore.sidebarCollapsed" class="sidebar-toggle collapsed-toggle" @click="sessionStore.toggleSidebar" title="展开侧边栏">
-        <ChevronRight :size="18" :stroke-width="2" aria-hidden="true" />
+  <div class="chat-view" :class="{ 'left-collapsed': sessionStore.sidebarCollapsed }">
+    <div class="sidebar-wrapper left-sidebar" :class="{ collapsed: sessionStore.sidebarCollapsed }">
+      <ChatSidebar v-show="!sessionStore.sidebarCollapsed" />
+      <button
+        v-if="!sessionStore.sidebarCollapsed"
+        type="button"
+        class="panel-sidebar-toggle panel-sidebar-toggle--collapse-left"
+        title="收起侧边栏"
+        @click="sessionStore.toggleSidebar"
+      >
+        <ChevronLeft :size="18" :stroke-width="2.2" aria-hidden="true" />
       </button>
+    </div>
 
-      <!-- 处理模式气泡容器 -->
-      <div class="mode-selector">
-        <span class="mode-label">处理模式:</span>
-        <div class="mode-tabs">
-          <button
-            v-for="mode in chatModes"
-            :key="mode"
-            class="mode-tab"
-            :class="{ active: sessionStore.currentMode === mode }"
-            @click="switchChatMode(mode)"
-          >
-            {{ modeLabels[mode] }}
-          </button>
+    <div class="chat-main" :class="{ 'sidebar-collapsed': sessionStore.sidebarCollapsed }">
+      <!-- 顶栏：处理模式 -->
+      <header class="chat-header">
+        <div class="mode-selector">
+          <div class="mode-tabs">
+            <button
+              v-for="mode in chatModes"
+              :key="mode"
+              class="mode-tab"
+              :class="{ active: sessionStore.currentMode === mode }"
+              @click="switchChatMode(mode)"
+            >
+              {{ modeLabels[mode] }}
+            </button>
+          </div>
         </div>
-      </div>
+        <span class="chat-header-hint">当前模型 · 识墨文坊 Pro</span>
+      </header>
 
       <div class="chat-messages" ref="messagesContainer">
         <div v-if="sessionStore.isInitializing" class="welcome-state">
@@ -419,22 +424,12 @@ function userMessageAttachments(msg) {
 
         <div v-else-if="sessionStore.messages.length === 0" class="welcome-state">
           <div class="welcome-icon" aria-hidden="true">
-            <MessagesSquare :size="48" :stroke-width="1.5" />
+            <MessagesSquare :size="28" :stroke-width="1.75" />
           </div>
-          <h1 class="welcome-title">智能对话</h1>
+          <h1 class="welcome-title">你好，我是识墨文坊助手</h1>
           <p class="welcome-subtitle">
-            通过自然语言与系统交互，完成文档分析，信息提取，内容生成等任务
+            上传文档并用自然语言告诉我你的需求，我可以帮你理解、编辑、提取填表与批量处理。
           </p>
-          <div class="quick-actions">
-            <button
-              v-for="action in quickActions"
-              :key="action.text"
-              class="quick-action"
-              @click="insertPrompt(action)"
-            >
-              <span>{{ action.text }}</span>
-            </button>
-          </div>
         </div>
 
         <div
@@ -443,7 +438,10 @@ function userMessageAttachments(msg) {
           class="message"
           :class="msg.role"
         >
-          <div class="message-avatar" :class="'role-' + msg.role" aria-hidden="true" />
+          <div class="message-avatar" :class="'role-' + msg.role" aria-hidden="true">
+            <Sparkles v-if="msg.role === 'assistant'" :size="16" :stroke-width="2" />
+            <span v-else-if="msg.role === 'user'" class="message-avatar-text">{{ authStore.userAvatar }}</span>
+          </div>
           <div class="message-content">
             <!-- 用户消息：带附件时显示文件卡片 -->
             <template v-if="msg.role === 'user' && userMessageAttachments(msg).length > 0">
@@ -487,8 +485,8 @@ function userMessageAttachments(msg) {
               <span>{{ msg.content }}</span>
             </div>
             <!-- 助手消息 -->
-            <div v-else class="message-bubble" :class="{ 'md-content': msg.role === 'assistant' }">
-              <div v-if="msg.role === 'assistant'" v-html="renderMarkdown(msg.content)"></div>
+            <div v-else class="message-bubble">
+              <div v-if="msg.role === 'assistant'" class="md-content" v-html="renderMarkdown(msg.content)"></div>
               <!-- Loading 动画 -->
               <div v-if="msg.isLoading" class="typing-indicator">
                 <span class="typing-dot"></span>
@@ -729,74 +727,6 @@ function userMessageAttachments(msg) {
       </div>
 
       <div class="chat-input-area">
-        <div class="chat-input-row">
-          <div
-            class="file-drop-zone"
-            :class="{ dragover: isDragover }"
-            @dragover="handleDragOver"
-            @dragleave="handleDragLeave"
-            @drop="handleDrop"
-            @click="triggerFileInput"
-          >
-            <span class="file-drop-zone-icon" aria-hidden="true">
-              <Paperclip :size="20" :stroke-width="2" />
-            </span>
-            <span class="file-drop-zone-text">
-              拖拽文件或 <span @click.stop="triggerFileInput">浏览</span>
-            </span>
-            <div class="file-type-switcher">
-              <button
-                class="file-type-btn"
-                :class="{ active: fileStore.currentFileType === 'data' }"
-                data-type="data"
-                @click.stop="switchFileType('data')"
-              >
-                数据文件
-              </button>
-              <button
-                class="file-type-btn"
-                :class="{ active: fileStore.currentFileType === 'template' }"
-                data-type="template"
-                @click.stop="switchFileType('template')"
-              >
-                模板文件
-              </button>
-            </div>
-            <div class="file-count-badges">
-              <span v-if="fileStore.hasDataFiles" class="file-badge data-badge">
-                数据 {{ fileStore.dataCount }}
-              </span>
-              <span v-if="fileStore.hasTemplateFiles" class="file-badge template-badge">
-                模板 {{ fileStore.templateCount }}
-              </span>
-            </div>
-          </div>
-
-          <div class="chat-input-wrapper">
-            <div class="chat-input">
-              <textarea
-                ref="textareaRef"
-                v-model="inputText"
-                rows="1"
-                placeholder="输入消息..."
-                @keydown="handleKeyDown"
-                @input="autoResize"
-              ></textarea>
-            </div>
-            <button
-              class="send-btn"
-              :class="{ loading: sessionStore.isStreaming }"
-              @click="sendMessage"
-              :disabled="!inputText.trim() || sessionStore.isStreaming"
-            >
-              <span v-if="!sessionStore.isStreaming" class="send-btn-ico" aria-hidden="true">
-                <Send :size="18" :stroke-width="2.2" />
-              </span>
-              <span v-else class="send-spinner"></span>
-            </button>
-          </div>
-        </div>
-
         <!-- Uploaded Files Panel -->
         <div class="uploaded-files-panel">
           <div class="panel-header" @click="fileStore.toggleFilesPanel">
@@ -866,249 +796,267 @@ function userMessageAttachments(msg) {
             </div>
           </div>
         </div>
+
+        <div class="chat-input-row">
+          <div
+            class="file-drop-zone"
+            :class="{ dragover: isDragover }"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop"
+            @click="triggerFileInput"
+          >
+            <span class="file-drop-zone-icon" aria-hidden="true">
+              <Paperclip :size="20" :stroke-width="2" />
+            </span>
+            <span class="file-drop-zone-text">
+              拖拽文件或 <span @click.stop="triggerFileInput">浏览</span>
+            </span>
+            <div class="file-type-switcher">
+              <button
+                class="file-type-btn"
+                :class="{ active: fileStore.currentFileType === 'data' }"
+                data-type="data"
+                @click.stop="switchFileType('data')"
+              >
+                数据文件
+              </button>
+              <button
+                class="file-type-btn"
+                :class="{ active: fileStore.currentFileType === 'template' }"
+                data-type="template"
+                @click.stop="switchFileType('template')"
+              >
+                模板文件
+              </button>
+            </div>
+            <div class="file-count-badges">
+              <span v-if="fileStore.hasDataFiles" class="file-badge data-badge">
+                数据 {{ fileStore.dataCount }}
+              </span>
+              <span v-if="fileStore.hasTemplateFiles" class="file-badge template-badge">
+                模板 {{ fileStore.templateCount }}
+              </span>
+            </div>
+          </div>
+
+          <div class="chat-input-wrapper">
+            <div class="chat-input">
+              <textarea
+                ref="textareaRef"
+                v-model="inputText"
+                rows="1"
+                placeholder="输入消息..."
+                @keydown="handleKeyDown"
+                @input="autoResize"
+              ></textarea>
+            </div>
+            <button
+              class="send-btn"
+              :class="{ loading: sessionStore.isStreaming }"
+              @click="sendMessage"
+              :disabled="!inputText.trim() || sessionStore.isStreaming"
+            >
+              <span v-if="!sessionStore.isStreaming" class="send-btn-ico" aria-hidden="true">
+                <Send :size="18" :stroke-width="2.2" />
+              </span>
+              <span v-else class="send-spinner"></span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
+
+    <button
+      v-if="sessionStore.sidebarCollapsed"
+      type="button"
+      class="panel-sidebar-toggle panel-sidebar-toggle--expand-left"
+      title="展开侧边栏"
+      @click="sessionStore.toggleSidebar"
+    >
+      <ChevronRight :size="18" :stroke-width="2.2" aria-hidden="true" />
+    </button>
   </div>
 </template>
 
 <style scoped>
 /* 进度条 */
 .progress-card {
-  background: #f9fafb;
-  border-radius: 0;
-  padding: 12px 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.progress-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  padding: 16px;
+  box-shadow: var(--shadow-soft);
 }
 
 .progress-title {
   font-size: 14px;
   font-weight: 500;
-  color: #374151;
+  color: var(--foreground);
 }
 
-.progress-msg {
-  font-size: 12px;
-  color: #9ca3af;
-  flex: 1;
-}
-
+.progress-msg,
 .progress-indicator {
   font-size: 12px;
-  color: #9ca3af;
-  animation: pulse 1s infinite;
+  color: var(--muted-foreground);
 }
 
 .progress-done {
   font-size: 12px;
-  color: #10b981;
+  color: var(--primary);
   font-weight: 500;
 }
 
 .progress-bar-container {
   height: 8px;
-  background: #e5e7eb;
-  border-radius: 0;
+  background: var(--secondary);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #10b981, #34d399);
-  border-radius: 0;
+  background: var(--primary);
+  border-radius: 999px;
   transition: width 0.3s ease;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-/* ============ 实体提取表格预览 ============ */
 .entity-preview {
   margin-top: 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
   overflow: hidden;
-  background: white;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
 }
 
 .entity-preview-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: white;
-  border-bottom: 1px solid #e5e7eb;
+  gap: 10px 12px;
+  padding: 14px 18px;
+  background: oklch(0.96 0.008 247 / 0.6);
+  border-bottom: 1px solid var(--border);
 }
 
 .entity-preview-title {
   font-size: 13px;
-  font-weight: 500;
-  color: #111827;
+  font-weight: 600;
+  color: var(--foreground);
 }
 
 .entity-preview-actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .entity-action-btn {
-  background: #3b82f6;
-  color: white;
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
-  border-radius: 0;
-  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
 }
 
-.entity-action-btn:hover {
-  background: #2563eb;
-}
-
 .entity-table-wrapper {
+  padding: 12px 16px 16px;
   overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
 .entity-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
-  background: white;
+  font-size: 13px;
 }
 
-.entity-table thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.entity-table th,
+.entity-table td {
+  padding: 11px 16px;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.5;
 }
 
 .entity-table th {
-  background: white;
-  color: #111827;
+  background: oklch(0.96 0.008 247 / 0.6);
+  color: var(--foreground);
   font-weight: 600;
-  padding: 6px 10px;
-  text-align: left;
-  white-space: nowrap;
-  border-bottom: 1px solid #d1d5db;
-  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
+}
+
+.entity-table th:not(:last-child),
+.entity-table td:not(:last-child) {
+  border-right: 1px solid var(--border);
 }
 
 .entity-table td {
-  padding: 5px 10px;
-  border-bottom: 1px solid #f3f4f6;
-  border-right: 1px solid #f9fafb;
-  color: #111827;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: white;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.entity-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .entity-table tbody tr:hover td {
-  background: #f0f9ff;
+  background: var(--accent);
 }
 
 .entity-preview-more {
-  padding: 8px 12px;
+  padding: 12px 18px;
   text-align: center;
   font-size: 12px;
-  color: #6b7280;
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  color: var(--muted-foreground);
+  border-top: 1px solid var(--border);
+  background: var(--card);
 }
 
 .table-fill-preview {
-  border-color: #fcd34d;
-  background: #fffbeb;
+  border-color: oklch(0.72 0.13 75 / 0.35);
 }
 
 .table-fill-preview .entity-preview-header {
-  background: #fffbeb;
-  border-bottom: 1px solid #fde68a;
-}
-
-.table-fill-preview .entity-preview-title {
-  color: #78350f;
+  background: oklch(0.72 0.13 75 / 0.1);
+  border-bottom-color: oklch(0.72 0.13 75 / 0.2);
 }
 
 .table-fill-preview .entity-table th {
-  background: #fef3c7;
-  color: #78350f;
-  border-bottom: 1px solid #fcd34d;
-  border-right: 1px solid #fde68a;
+  background: oklch(0.72 0.13 75 / 0.12);
 }
 
-.table-fill-preview .entity-table td {
-  border-bottom: 1px solid #fef3c7;
-  border-right: 1px solid #fefce8;
-  background: #ffffff;
+.table-fill-preview .entity-table-wrapper {
+  padding: 12px 16px 16px;
 }
 
-.table-fill-preview .entity-table tbody tr:hover td {
-  background: #fff7ed;
+.table-fill-preview .entity-preview-title,
+.table-fill-stats {
+  color: oklch(0.45 0.12 75);
 }
 
 .table-fill-preview .entity-preview-more {
-  background: #fffbeb;
-  border-top: 1px solid #fde68a;
-  color: #92400e;
-}
-
-.table-fill-stats {
-  font-size: 12px;
-  color: #92400e;
-  white-space: nowrap;
-}
-
-.table-fill-stats-inline {
-  margin-left: 8px;
-  font-weight: 500;
-}
-
-/* Loading 动画 */
-.typing-indicator {
-  display: inline-flex !important;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 4px 0;
+  border-top-color: oklch(0.72 0.13 75 / 0.2);
+  background: oklch(0.72 0.13 75 / 0.06);
 }
 
 .typing-dot {
   width: 6px;
   height: 6px;
-  background: #6b7280;
-  border-radius: 0;
+  background: var(--muted-foreground);
+  border-radius: 50%;
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 
-.typing-dot:nth-child(1) {
-  animation-delay: -0.32s;
-}
-
-.typing-dot:nth-child(2) {
-  animation-delay: -0.16s;
-}
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
 
 @keyframes typing-bounce {
-  0%, 80%, 100% {
-    transform: scale(0);
-    opacity: 0.4;
-  }
-  40% {
-    transform: scale(1);
-    opacity: 1;
-  }
+  0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
 }
 </style>

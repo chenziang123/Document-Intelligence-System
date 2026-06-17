@@ -153,7 +153,7 @@ class ExcelReader(DocumentReader):
     3. 统计计算默认分析全文件（max_rows_stats），只展示部分样本（max_rows）
     """
 
-    def read(self, file_path: str, max_rows: int = 300, compute_stats: bool = True, max_rows_stats: int = 100000) -> str:
+    def read(self, file_path: str, max_rows: int = 300, compute_stats: bool = True, max_rows_stats: int = 100000, workflow_table: bool = False) -> str:
         """
         Read and extract text from Excel file with optional statistical analysis
 
@@ -161,7 +161,11 @@ class ExcelReader(DocumentReader):
         :param max_rows: Maximum number of rows to display/sample (default: 300)
         :param compute_stats: Whether to compute statistics for numeric columns (default: True)
         :param max_rows_stats: Maximum rows to analyze for statistics (default: 100000)
+        :param workflow_table: 工作流模式：仅输出首个有数据的工作表（表头+TSV 行），无统计摘要
         """
+        if workflow_table:
+            return self._read_workflow_table(file_path, max_rows=max_rows)
+
         logger.info(f"开始读取Excel文件: {file_path}")
         logger.info(f"参数: max_rows={max_rows} (展示), max_rows_stats={max_rows_stats} (统计), compute_stats={compute_stats}")
 
@@ -226,6 +230,31 @@ class ExcelReader(DocumentReader):
             return extracted_text if extracted_text else "No text found in the Excel file."
         except Exception as e:
             logger.error(f"读取Excel文件失败: {file_path}, 错误: {str(e)}")
+            return f"Error reading Excel: {str(e)}"
+
+    def _read_workflow_table(self, file_path: str, max_rows: int = 10000) -> str:
+        """工作流用：读取首个含数据的工作表，返回纯 TSV（表头 + 数据行）。"""
+        try:
+            wb = load_workbook(file_path, data_only=True)
+            try:
+                for sheet_name in wb.sheetnames:
+                    sheet = wb[sheet_name]
+                    lines: List[str] = []
+                    for row_idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                        if row_idx >= max_rows:
+                            break
+                        cells = [str(cell) if cell is not None else "" for cell in row]
+                        if not any(str(c).strip() for c in cells):
+                            continue
+                        lines.append("\t".join(cells))
+                    if lines:
+                        logger.info(f"工作流表格读取: {file_path} / {sheet_name}，{len(lines)} 行")
+                        return "\n".join(lines)
+                return ""
+            finally:
+                wb.close()
+        except Exception as e:
+            logger.error(f"工作流表格读取失败: {file_path}, {e}")
             return f"Error reading Excel: {str(e)}"
 
     def _compute_statistics(self, headers: List[str], rows_data: List[List[str]]) -> str:
@@ -490,7 +519,13 @@ class DocumentReaderFactory:
         return ext in cls._readers
 
 
-def read_document(filename: str, max_rows: int = 100, compute_stats: bool = True, max_rows_stats: int = 100000) -> str:
+def read_document(
+    filename: str,
+    max_rows: int = 100,
+    compute_stats: bool = True,
+    max_rows_stats: int = 100000,
+    workflow_table: bool = False,
+) -> str:
     """
     Reads and extracts text from a specified document file.
     Supports multiple document types: TXT, DOCX, PDF, Excel (XLSX, XLS).
@@ -499,6 +534,7 @@ def read_document(filename: str, max_rows: int = 100, compute_stats: bool = True
     :param max_rows: Maximum number of rows to display/sample (default: 100)
     :param compute_stats: Whether to compute statistics for Excel numeric columns (default: True)
     :param max_rows_stats: Maximum rows to analyze for statistics (default: 100000)
+    :param workflow_table: Excel 工作流模式，仅输出纯表格 TSV
     :return: Extracted text from the document
     """
     logger.info(f"[read_document] 请求读取文件: {filename}")
@@ -519,7 +555,13 @@ def read_document(filename: str, max_rows: int = 100, compute_stats: bool = True
         ext = file_path.suffix.lower()
         if ext in ['.xlsx', '.xls'] and isinstance(reader, ExcelReader):
             logger.info(f"[read_document] 调用 ExcelReader 读取: {filename}")
-            return reader.read(str(file_path), max_rows=max_rows, compute_stats=compute_stats, max_rows_stats=max_rows_stats)
+            return reader.read(
+                str(file_path),
+                max_rows=max_rows,
+                compute_stats=compute_stats,
+                max_rows_stats=max_rows_stats,
+                workflow_table=workflow_table,
+            )
 
         result = reader.read(str(file_path))
         logger.info(f"[read_document] 读取完成: {filename}, 长度: {len(result)} 字符")

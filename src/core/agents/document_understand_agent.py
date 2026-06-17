@@ -15,7 +15,7 @@ from utils.document_reader import read_document
 
 
 # 默认文档理解系统提示词
-DEFAULT_DOC_SYSTEM_PROMPT = """【身份】你是文档智能系统的 AI 助手，运行在【文档理解模式】下。
+DEFAULT_DOC_SYSTEM_PROMPT = """【身份】你是识墨文坊的 AI 助手，运行在【文档理解模式】下。
 
 【核心能力】
 1. **文档阅读** - 支持解析 docx、pdf、txt、md、xlsx、xls 等多种格式文档
@@ -163,7 +163,7 @@ class DocumentAgent(BaseAgent):
 - 如果用户问其他问题：正常对话即可
 - 回复应该简洁、自然，像正常对话一样
 ## 你的身份
- 你是文档智能系统的文档理解模式的助手，可以用户您阅读、理解和分析上传的文档内容。
+ 你是识墨文坊的文档理解模式的助手，可以用户您阅读、理解和分析上传的文档内容。
 
 """
             msgs.append({"role": "system", "content": no_doc_system})
@@ -175,13 +175,13 @@ class DocumentAgent(BaseAgent):
         同步生成器：直接遍历 client.stream()，每个 chunk yield LLM 分片。
         在 async context 中用 async for 包装时，外层用 asyncio.to_thread。
         """
-        from langchain_openai import ChatOpenAI
+        from core.llm.llm_service import build_chat_openai
 
         # 构建消息（无文档时会自动添加防幻觉约束）
         messages = self._build_llm_messages(user_input)
         lc_messages = self._llm_service._convert_messages(messages)
 
-        client = ChatOpenAI(
+        client = build_chat_openai(
             api_key=self._llm_service._get_api_key(),
             base_url=self._llm_service._get_base_url(),
             model=self._llm_service.config.model,

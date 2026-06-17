@@ -161,20 +161,32 @@ class WorkflowCoordinator:
 
         # 2. Agent_A 编辑文档
         task_spec.parameters["parsed_content"] = parsed_content
-        result = self.executor.execute_agent(
+        agent_response = self.executor.execute_agent(
             agent_name="agent_a",
             task_spec=task_spec,
             mode="editing"
         )
 
+        inner_data = getattr(agent_response, "data", None) if agent_response is not None else None
+        if not isinstance(inner_data, dict):
+            inner_data = {}
+        edited = bool(inner_data.get("edited"))
+        agent_success = bool(getattr(agent_response, "success", False))
+        success = agent_success and edited
+        message = getattr(agent_response, "message", "") if agent_response is not None else ""
+        if success:
+            message = "文档编辑完成，已生成可下载文件"
+        elif not message:
+            message = "文档编辑未完成，请检查文件格式与编辑指令"
+
         output_file = task_spec.output_file
-        if isinstance(getattr(result, "data", None), dict):
-            output_file = result.data.get("output_file") or output_file
+        if inner_data.get("output_file"):
+            output_file = inner_data.get("output_file")
 
         return WorkflowResult(
-            success=True,
-            message="文档编辑完成，已生成可下载文件",
-            data=result,
+            success=success,
+            message=message,
+            data=agent_response,
             output_file=output_file
         )
 

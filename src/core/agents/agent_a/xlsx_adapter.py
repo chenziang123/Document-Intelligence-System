@@ -379,14 +379,17 @@ class XlsxAdapter:
                 row_values = [ws.cell(row=r, column=c).value for c in range(1, ws.max_column + 1)]
                 rows_data.append((r, row_values))
 
-            def _key(item: Tuple[int, List[Any]]) -> Tuple[int, Any]:
+            def _key(item: Tuple[int, List[Any]]) -> Tuple[int, float, str]:
                 v = item[1][sort_col - 1]
                 if v is None:
-                    return (1, "")
+                    return (2, 0.0, "")
+                text = str(v).strip()
+                if not text or text.lower() in {"null", "none", "n/a", "na", "-", "nan"}:
+                    return (2, 0.0, "")
                 try:
-                    return (0, float(v))
-                except Exception:
-                    return (0, str(v))
+                    return (0, float(text), "")
+                except (ValueError, TypeError):
+                    return (1, 0.0, text.casefold())
 
             sorted_rows = sorted(rows_data, key=_key, reverse=descending)
             for idx, (_, values) in enumerate(sorted_rows):

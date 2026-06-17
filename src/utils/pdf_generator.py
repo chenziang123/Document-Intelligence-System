@@ -39,6 +39,7 @@ CHINESE_FONT_CANDIDATES = [
 _font_normal: str = "Helvetica"
 _font_bold: str = "Helvetica-Bold"
 _font_registered: bool = False
+_HIGHLIGHT_BG = "#FFF176"
 
 
 def _register_chinese_font() -> None:
@@ -48,28 +49,64 @@ def _register_chinese_font() -> None:
         return
     _font_registered = True
 
-    for font_file, font_label in CHINESE_FONT_CANDIDATES:
+    registered: dict[str, str] = {}
+    for font_file, alias in [
+        ("msyh.ttc", "ChineseFont"),
+        ("simhei.ttf", "ChineseFont"),
+        ("simsun.ttc", "ChineseFont"),
+        ("NotoSansSC-VF.ttf", "ChineseFont"),
+        ("msyhbd.ttc", "ChineseFontBold"),
+        ("simhei.ttf", "ChineseFontBold"),
+    ]:
         p = FONT_DIR / font_file
-        if not p.exists():
+        if not p.exists() or alias in registered:
             continue
         try:
-            # 用唯一别名注册，避免与内置字体同名冲突
-            alias = "ChineseFont"
             pdfmetrics.registerFont(TTFont(alias, str(p)))
-            _font_normal = alias
-            _font_bold = alias  # 同一体（reportlab 不支持粗体别名）
-            return
+            registered[alias] = str(p)
         except Exception:
             continue
 
-    # 全部失败：用内置 Helvetica
-    _font_normal = "Helvetica"
-    _font_bold = "Helvetica-Bold"
+    if "ChineseFont" in registered:
+        _font_normal = "ChineseFont"
+    if "ChineseFontBold" in registered:
+        _font_bold = "ChineseFontBold"
+    elif "ChineseFont" in registered:
+        _font_bold = "ChineseFont"
 
 
 def _get_fonts() -> tuple:
     _register_chinese_font()
     return _font_normal, _font_bold
+
+
+def prepare_text_for_pdf(text: str) -> str:
+    """为 PDF 渲染预处理文本，保留关键词高亮结构并便于着色。"""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    if "【高亮结果】" not in raw:
+        return raw
+
+    kw_part = ""
+    if "【关键词】" in raw:
+        kw_start = raw.find("【关键词】")
+        hl_start = raw.find("【高亮结果】")
+        if kw_start < hl_start:
+            kw_part = raw[kw_start:hl_start].strip()
+
+    body = raw.split("【高亮结果】", 1)[1].strip()
+    parts: List[str] = []
+    if kw_part:
+        parts.append(kw_part)
+    parts.append("【高亮结果】")
+    parts.append(body)
+    return "\n\n".join(parts)
+
+
+def _is_keyword_highlight_document(text: str) -> bool:
+    """是否为关键词高亮节点的结构化输出。"""
+    return "【高亮结果】" in (text or "")
 
 
 def text_to_pdf(
@@ -87,8 +124,12 @@ def text_to_pdf(
     - 表格 (| ... |) → 表格样式
     - 空行 → Spacer
     - 其余 → 正文
+    - 仅关键词高亮节点输出（含【高亮结果】段）中的 **词** 才渲染黄色底纹
     """
     path = Path(output_path)
+    text = prepare_text_for_pdf(text)
+    keyword_highlight_doc = _is_keyword_highlight_document(text)
+    in_highlight_section = False
     doc = SimpleDocTemplate(
         str(path),
         pagesize=A4,
@@ -117,6 +158,8 @@ def text_to_pdf(
                spaceBefore=18, spaceAfter=8, textColor=colors.HexColor("#16213e"))
     s_h2 = sty("MyH2", fontName=fn_bold, fontSize=15, leading=20,
                spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#0f3460"))
+    s_section = sty("MySection", fontName=fn_bold, fontSize=14, leading=20,
+                  spaceBefore=12, spaceAfter=6, textColor=colors.HexColor("#0f3460"))
     s_h3 = sty("MyH3", fontName=fn_bold, fontSize=13, leading=18,
                spaceBefore=10, spaceAfter=4, textColor=colors.HexColor("#1a1a2e"))
     s_body = sty("MyBody", fontName=fn_normal, fontSize=font_size,
@@ -145,14 +188,24 @@ def text_to_pdf(
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
+        use_highlight = keyword_highlight_doc and in_highlight_section
 
+        # 关键词高亮分段标题
+        if stripped == "【关键词】":
+            in_highlight_section = False
+            use_highlight = False
+            story.append(Paragraph(_esc(stripped), s_section))
+        elif stripped == "【高亮结果】":
+            in_highlight_section = True
+            use_highlight = True
+            story.append(Paragraph(_esc(stripped), s_section))
         # 标题
-        if stripped.startswith("### "):
-            story.append(Paragraph(_esc(stripped[4:]), s_h3))
+        elif stripped.startswith("### "):
+            story.append(Paragraph(_render(stripped[4:], s_h3, highlight=use_highlight), s_h3))
         elif stripped.startswith("## "):
-            story.append(Paragraph(_esc(stripped[3:]), s_h2))
+            story.append(Paragraph(_render(stripped[3:], s_h2, highlight=use_highlight), s_h2))
         elif stripped.startswith("# "):
-            story.append(Paragraph(_esc(stripped[2:]), s_h1))
+            story.append(Paragraph(_render(stripped[2:], s_h1, highlight=use_highlight), s_h1))
         # 代码块
         elif stripped.startswith("```"):
             code_lines: List[str] = []
@@ -167,14 +220,18 @@ def text_to_pdf(
             rows, i = _parse_table(lines, i)
             if rows:
                 ncols = len(rows[0])
-                col_w = (A4[0] - 4 * cm) / ncols
+                col_w = (A4[0] - 4 * cm) / max(ncols, 1)
                 tbl_data = []
                 for ri, row in enumerate(rows):
-                    p_row = [
-                        Paragraph(_render(row[ci], s_th if ri == 0 else s_td),
-                                  s_th if ri == 0 else s_td)
-                        for ci in range(ncols)
-                    ]
+                    p_row = []
+                    for ci in range(ncols):
+                        cell = row[ci] if ci < len(row) else ""
+                        p_row.append(
+                            Paragraph(
+                                _render(cell, s_th if ri == 0 else s_td, highlight=False),
+                                s_th if ri == 0 else s_td,
+                            )
+                        )
                     tbl_data.append(p_row)
                 tbl = Table(tbl_data, colWidths=[col_w] * ncols, repeatRows=1)
                 tbl.setStyle(TableStyle([
@@ -195,21 +252,25 @@ def text_to_pdf(
                 story.append(Spacer(1, 10))
         # 引用
         elif stripped.startswith("> "):
-            story.append(Paragraph(_render(stripped[2:], s_body), s_quote))
+            story.append(Paragraph(_render(stripped[2:], s_body, highlight=use_highlight), s_quote))
         # 列表
         elif re.match(r"^(\s*)[-*+]\s+", stripped) or re.match(r"^(\s*)\d+\.\s+", stripped):
             m = re.match(r"^(\s*)([-*+]|\d+\.)\s+(.*)", stripped)
             if m:
                 indent, bullet, rest = m.groups()
                 lvl = len(indent) // 2
-                story.append(Paragraph(_render(f"{'  ' * lvl}{bullet} {rest}", s_body),
-                                       sty_copy(s_body, leftIndent=16 + lvl * 16)))
+                story.append(
+                    Paragraph(
+                        _render(f"{'  ' * lvl}{bullet} {rest}", s_body, highlight=use_highlight),
+                        sty_copy(s_body, leftIndent=16 + lvl * 16),
+                    )
+                )
         # 空行
         elif not stripped:
             story.append(Spacer(1, 6))
         # 正文
         else:
-            story.append(Paragraph(_render(stripped, s_body), s_body))
+            story.append(Paragraph(_render(stripped, s_body, highlight=use_highlight), s_body))
 
         i += 1
 
@@ -221,15 +282,63 @@ def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _render(text: str, base_style: ParagraphStyle) -> str:
-    """将 markdown 行内样式转为 reportlab XML 标记。"""
+def _render(text: str, base_style: ParagraphStyle, *, highlight: bool = False) -> str:
+    """将 markdown 行内样式转为 reportlab XML 标记（先保护行内代码，避免标签嵌套错误）。"""
     result = _esc(text)
-    result = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", result)
-    result = re.sub(r"__(.+?)__", r"<b>\1</b>", result)
-    result = re.sub(r"\*(.+?)\*", r"<i>\1</i>", result)
-    result = re.sub(r"_(.+?)_", r"<i>\1</i>", result)
-    result = re.sub(r"`(.+?)`", r"<font face='Courier' color='#c7254e'>\1</font>", result)
+    fn_bold, _ = _get_fonts()
+    code_spans: List[str] = []
+
+    def _stash_code(match: re.Match) -> str:
+        code_spans.append(match.group(1))
+        return f"@@CODE{len(code_spans) - 1}@@"
+
+    # 先抽出 `code`，避免其中的 _ * 被误当成强调语法
+    result = re.sub(r"`([^`]+)`", _stash_code, result)
+
+    if highlight:
+        result = re.sub(
+            r"\*\*(.+?)\*\*",
+            rf'<span backColor="{_HIGHLIGHT_BG}"><font face="{fn_bold}">\1</font></span>',
+            result,
+        )
+        result = re.sub(
+            r"__(.+?)__",
+            rf'<span backColor="{_HIGHLIGHT_BG}"><font face="{fn_bold}">\1</font></span>',
+            result,
+        )
+        # 高亮模式下不做 * / _ 斜体解析，避免 138******** 等掩码手机号破坏 markup
+    else:
+        result = re.sub(r"\*\*(.+?)\*\*", rf'<font face="{fn_bold}"><b>\1</b></font>', result)
+        result = re.sub(r"__(.+?)__", rf'<font face="{fn_bold}"><b>\1</b></font>', result)
+        # *斜体*（排除 **）
+        result = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", result)
+        # _斜体_（排除 snake_case 如 protocol_type、fetch_kddcup99）
+        result = re.sub(r"(?<![\w])_([^_]+)_(?![\w])", r"<i>\1</i>", result)
+
+    for idx, code in enumerate(code_spans):
+        result = result.replace(
+            f"@@CODE{idx}@@",
+            f"<font face='Courier' color='#c7254e'>{code}</font>",
+        )
     return result
+
+
+def _normalize_table_rows(rows: List[List[str]]) -> List[List[str]]:
+    """将表格各行补齐为相同列数，避免渲染时越界。"""
+    if not rows:
+        return []
+    ncols = max(len(row) for row in rows)
+    if ncols <= 0:
+        return []
+    normalized: List[List[str]] = []
+    for row in rows:
+        cells = [str(c).strip() for c in row]
+        if len(cells) < ncols:
+            cells.extend([""] * (ncols - len(cells)))
+        elif len(cells) > ncols:
+            cells = cells[:ncols]
+        normalized.append(cells)
+    return normalized
 
 
 def _parse_table(lines: List[str], start: int) -> tuple:
@@ -242,12 +351,15 @@ def _parse_table(lines: List[str], start: int) -> tuple:
             break
         row = [c.strip() for c in line.strip("|").split("|")]
         # 跳过对齐行
-        if all(re.match(r"^[\s:|-]+$", c) for c in row):
+        if row and all(re.match(r"^[\s:|-]+$", c) for c in row if c):
+            i += 1
+            continue
+        if not any(cell for cell in row):
             i += 1
             continue
         rows.append(row)
         i += 1
         if len(rows) > 30:
             break
-    return rows, i
+    return _normalize_table_rows(rows), i
 

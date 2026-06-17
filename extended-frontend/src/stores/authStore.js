@@ -60,6 +60,36 @@ export const useAuthStore = defineStore('auth', () => {
     authApi.clearAccessToken()
   }
 
+  async function fetchCurrentUser() {
+    const res = await authApi.me()
+    if (res) {
+      currentUser.value = {
+        id: res.id,
+        phone: res.phone,
+        display_name: res.display_name,
+        status: res.status || 'active',
+      }
+    }
+    return res
+  }
+
+  async function updateDisplayName(displayName) {
+    const name = String(displayName || '').trim()
+    const res = await authApi.updateProfile({ display_name: name })
+    const user = getUserFromToken()
+    if (user) {
+      currentUser.value = user
+    } else if (res?.user) {
+      currentUser.value = {
+        id: res.user.id,
+        phone: res.user.phone,
+        display_name: res.user.display_name,
+        status: res.user.status || 'active',
+      }
+    }
+    return res
+  }
+
   return {
     currentUser,
     isInitializing,
@@ -70,5 +100,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     logout,
+    fetchCurrentUser,
+    updateDisplayName,
   }
 })

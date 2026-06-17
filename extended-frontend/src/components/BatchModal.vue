@@ -176,7 +176,10 @@ watch(
               v-for="np in workflowStore.nodeProgress"
               :key="np.id || np.title"
               class="node-chip"
-              :class="'np-' + (np.status || 'pending')"
+              :class="[
+                'np-' + (np.status || 'pending'),
+                np.type ? 'np-type-' + np.type : '',
+              ]"
               :title="(np.title || '') + (np.message ? ' — ' + np.message : '')"
             >
               <span class="node-chip-idx">{{ np.index != null ? np.index : '' }}</span>
@@ -371,24 +374,39 @@ watch(
   max-width: 140px;
   padding: 3px 8px;
   font-size: 11px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  border: 1px solid var(--chip-accent, var(--border-color));
+  background: var(--chip-accent-bg, var(--bg-secondary));
+  color: var(--chip-accent, var(--text-secondary));
+}
+
+.node-chip.np-type-input {
+  --chip-accent: #eab308;
+  --chip-accent-bg: rgba(234, 179, 8, 0.12);
+}
+
+.node-chip.np-type-ai {
+  --chip-accent: #2563eb;
+  --chip-accent-bg: rgba(37, 99, 235, 0.1);
+}
+
+.node-chip.np-type-output {
+  --chip-accent: #1e40af;
+  --chip-accent-bg: rgba(30, 64, 175, 0.1);
+}
+
+.node-chip.np-type-control {
+  --chip-accent: #7c3aed;
+  --chip-accent-bg: rgba(124, 58, 237, 0.1);
 }
 
 .node-chip.np-running {
-  border-color: var(--accent-cyan);
-  color: var(--accent-cyan);
-}
-
-.node-chip.np-completed,
-.node-chip.np-done {
-  border-color: var(--accent-success);
-  color: var(--accent-success);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip-accent, var(--accent-cyan)) 35%, transparent);
 }
 
 .node-chip.np-failed,
 .node-chip.np-error {
+  --chip-accent: var(--accent-danger);
+  --chip-accent-bg: rgba(239, 68, 68, 0.08);
   border-color: var(--accent-danger);
   color: var(--accent-danger);
 }

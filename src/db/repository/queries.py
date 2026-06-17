@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from psycopg.rows import dict_row
+from db.mysql_compat import dict_row
 
 from config import SystemConfig, get_config
 from db.connection import db_connection

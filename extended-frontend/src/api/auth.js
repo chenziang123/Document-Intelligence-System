@@ -70,6 +70,15 @@ export default {
     return client.get('/auth/me')
   },
 
+  updateProfile(data) {
+    return client.patch('/auth/me', data).then((res) => {
+      if (res?.access_token) {
+        setAccessToken(res.access_token)
+      }
+      return res
+    })
+  },
+
   logout() {
     return client.post('/auth/logout').finally(() => {
       clearAccessToken()

@@ -23,6 +23,10 @@ export const useLibraryStore = defineStore('library', () => {
     const q = searchQuery.value.toLowerCase()
     return currentDocs.value.filter(d => d.name.toLowerCase().includes(q))
   })
+  const isAllSelected = computed(() => {
+    const docs = filteredDocs.value
+    return docs.length > 0 && docs.every(d => selectedDocIds.value.has(d.id))
+  })
 
   // ==================== 空间操作 ====================
 
@@ -102,6 +106,31 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  async function updateSpace(spaceId, data) {
+    error.value = null
+    try {
+      const res = await libraryApi.updateSpace(spaceId, data)
+      const idx = spaces.value.findIndex(s => s.id === spaceId)
+      if (idx !== -1) {
+        spaces.value[idx] = {
+          ...spaces.value[idx],
+          name: res.name,
+          icon: res.icon || spaces.value[idx].icon,
+          description: res.description,
+          updated_at: res.updated_at,
+        }
+      }
+      return res
+    } catch (e) {
+      error.value = e.message || '更新空间失败'
+      throw e
+    }
+  }
+
+  async function renameSpace(spaceId, newName) {
+    return updateSpace(spaceId, { name: newName.trim() })
+  }
+
   function selectSpace(spaceId, forceRefresh = false) {
     if (currentSpaceId.value === spaceId && !forceRefresh) return
     currentSpaceId.value = spaceId
@@ -128,19 +157,7 @@ export const useLibraryStore = defineStore('library', () => {
     error.value = null
     try {
       const res = await libraryApi.getDocs(spaceId)
-      const docs = (res?.docs || []).map(d => ({
-        id: d.id,
-        name: d.file_name,
-        size: _formatSize(d.file_size),
-        size_bytes: d.file_size,
-        time: _formatTime(d.created_at),
-        mime_type: d.mime_type,
-        file_extension: d.file_extension,
-        storage_key: d.storage_key,
-        blob_url: d.blob_url,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-      }))
+      const docs = (res?.docs || []).map(_mapDoc)
       // 更新缓存和当前文档
       docsCache.value[spaceId] = docs
       if (currentSpaceId.value === spaceId) {
@@ -185,15 +202,62 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  function _mapDoc(d) {
+    return {
+      id: d.id,
+      name: d.file_name,
+      size: _formatSize(d.file_size),
+      size_bytes: d.file_size,
+      time: _formatTime(d.created_at),
+      mime_type: d.mime_type,
+      file_extension: d.file_extension,
+      storage_key: d.storage_key,
+      blob_url: d.blob_url,
+      created_at: d.created_at,
+      updated_at: d.updated_at,
+    }
+  }
+
+  function _syncDocsCache(spaceId, docs) {
+    docsCache.value[spaceId] = docs
+    if (currentSpaceId.value === spaceId) {
+      currentDocs.value = docs
+    }
+  }
+
+  async function renameDoc(docId, newName) {
+    error.value = null
+    try {
+      const res = await libraryApi.renameDoc(docId, newName)
+      const updated = _mapDoc(res)
+      const spaceId = currentSpaceId.value
+      if (!spaceId) return updated
+
+      const docs = (docsCache.value[spaceId] || currentDocs.value).map(d =>
+        d.id === docId ? updated : d
+      )
+      _syncDocsCache(spaceId, docs)
+      return updated
+    } catch (e) {
+      error.value = e.message || '重命名失败'
+      throw e
+    }
+  }
+
   async function deleteDoc(docId) {
     error.value = null
     try {
       await libraryApi.deleteDoc(docId)
-      currentDocs.value = currentDocs.value.filter(d => d.id !== docId)
+      const spaceId = currentSpaceId.value
+      const docs = currentDocs.value.filter(d => d.id !== docId)
+      if (spaceId) {
+        _syncDocsCache(spaceId, docs)
+      } else {
+        currentDocs.value = docs
+      }
       selectedDocIds.value.delete(docId)
-      // 更新空间文档数量
       if (currentSpace.value) {
-        currentSpace.value.doc_count = currentDocs.value.length
+        currentSpace.value.doc_count = docs.length
       }
     } catch (e) {
       error.value = e.message || '删除文档失败'
@@ -207,11 +271,16 @@ export const useLibraryStore = defineStore('library', () => {
     error.value = null
     try {
       await libraryApi.deleteDocsBatch(ids)
-      currentDocs.value = currentDocs.value.filter(d => !ids.includes(d.id))
+      const spaceId = currentSpaceId.value
+      const docs = currentDocs.value.filter(d => !ids.includes(d.id))
+      if (spaceId) {
+        _syncDocsCache(spaceId, docs)
+      } else {
+        currentDocs.value = docs
+      }
       selectedDocIds.value.clear()
-      // 更新空间文档数量
       if (currentSpace.value) {
-        currentSpace.value.doc_count = currentDocs.value.length
+        currentSpace.value.doc_count = docs.length
       }
     } catch (e) {
       error.value = e.message || '批量删除失败'
@@ -222,11 +291,13 @@ export const useLibraryStore = defineStore('library', () => {
   // ==================== 选择操作 ====================
 
   function toggleDocSelect(docId) {
-    if (selectedDocIds.value.has(docId)) {
-      selectedDocIds.value.delete(docId)
+    const next = new Set(selectedDocIds.value)
+    if (next.has(docId)) {
+      next.delete(docId)
     } else {
-      selectedDocIds.value.add(docId)
+      next.add(docId)
     }
+    selectedDocIds.value = next
   }
 
   function isDocSelected(docId) {
@@ -234,7 +305,19 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function clearSelection() {
-    selectedDocIds.value.clear()
+    selectedDocIds.value = new Set()
+  }
+
+  function toggleSelectAll() {
+    if (isAllSelected.value) {
+      const next = new Set(selectedDocIds.value)
+      filteredDocs.value.forEach(d => next.delete(d.id))
+      selectedDocIds.value = next
+    } else {
+      const next = new Set(selectedDocIds.value)
+      filteredDocs.value.forEach(d => next.add(d.id))
+      selectedDocIds.value = next
+    }
   }
 
   function setSearchQuery(query) {
@@ -291,21 +374,26 @@ export const useLibraryStore = defineStore('library', () => {
     currentSpace,
     selectedCount,
     filteredDocs,
+    isAllSelected,
     // 空间操作
     loadSpaces,
     createSpace,
+    updateSpace,
+    renameSpace,
     deleteSpace,
     selectSpace,
     // 文档操作
     loadDocs,
     refreshDocs,
     uploadDocs,
+    renameDoc,
     deleteDoc,
     deleteSelectedDocs,
     // 选择操作
     toggleDocSelect,
     isDocSelected,
     clearSelection,
+    toggleSelectAll,
     setSearchQuery,
   }
 })

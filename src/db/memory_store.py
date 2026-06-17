@@ -439,10 +439,15 @@ def memory_get_library_doc_by_id(doc_id, config=None, user_id=None):
     return None
 
 
-def memory_update_library_doc(doc_id, config=None, user_id=None):
+def memory_update_library_doc(doc_id, file_name=None, config=None, user_id=None):
     from db.library_repository import LibraryDocRow
     for d in _library_store_docs:
         if str(d["id"]) == doc_id and d.get("deleted_at") is None:
+            if file_name is not None:
+                d["file_name"] = file_name
+                d["file_extension"] = (
+                    file_name.rsplit(".", 1)[-1].lower() if "." in file_name else None
+                )
             d["updated_at"] = datetime.utcnow()
             return LibraryDocRow(
                 id=str(d["id"]), space_id=str(d["space_id"]), user_id=d.get("user_id"),

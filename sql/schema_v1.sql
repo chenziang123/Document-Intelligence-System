@@ -1,5 +1,5 @@
 -- =============================================================================
--- 文档智能系统 · 数据库 DDL（基线）
+-- 识墨文坊 · 数据库 DDL（基线）
 -- 目标: PostgreSQL 14+ / Supabase
 -- 契约: docs/contracts/integration-contract-v1.md
 -- 执行: psql "$DATABASE_URL" -f sql/schema_v1.sql

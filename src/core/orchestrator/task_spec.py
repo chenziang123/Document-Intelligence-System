@@ -94,9 +94,12 @@ class TaskSpec:
                 return False, f"源文件路径为空: {f.name}"
 
         if self.task_type == TaskType.DOCUMENT_EDITING:
-            docx_files = self.get_source_by_type(FileType.DOCX)
-            if not docx_files:
-                return False, "文档编辑模式需要提供 Word 文档 (docx)"
+            editable_types = {FileType.DOCX, FileType.MD, FileType.TXT, FileType.XLSX}
+            if not any(f.file_type in editable_types for f in self.source_files):
+                return False, "文档编辑模式需要上传 docx、md、txt 或 xlsx 文件（PDF 暂不支持直接编辑）"
+            for f in self.source_files:
+                if not Path(f.path).exists():
+                    return False, f"源文件不存在或无法读取: {f.name or f.path}"
 
         elif self.task_type == TaskType.ENTITY_EXTRACTION:
             if not self.has_document():

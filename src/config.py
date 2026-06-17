@@ -19,7 +19,7 @@ def _load_project_env() -> None:
 
     root_env = Path(__file__).resolve().parent.parent / ".env"
     if root_env.exists():
-        load_dotenv(root_env)
+        load_dotenv(root_env, override=True)
 
 
 _load_project_env()
@@ -39,15 +39,14 @@ class LLMConfig:
 
 @dataclass
 class DatabaseConfig:
-    """数据库配置（PostgreSQL / Supabase 兼容）"""
+    """数据库配置（MySQL / MariaDB）"""
     enabled: bool = False
-    provider: str = "postgresql"  # postgresql, sqlite, etc.
-    # 完整连接串：设置后优先使用（Supabase 控制台 「Database」→「Connection string」）
+    provider: str = "mysql"
     url: Optional[str] = None
     host: str = "localhost"
-    port: int = 5432
+    port: int = 3306
     database: str = "doc_intel"
-    username: str = "postgres"
+    username: str = "root"
     password: str = ""
     # 云数据库（含 Supabase）通常需要 require；未使用 url 分段配置时生效
     sslmode: str = "prefer"
@@ -87,7 +86,7 @@ class StorageConfig:
 class AgentConfig:
     """Agent配置"""
     prompts: dict = field(default_factory=lambda: {
-        "conversation": """你是一个友好的人工智能助手，基于文档智能系统运行。
+        "conversation": """你是一个友好的人工智能助手，基于识墨文坊运行。
 
 系统能力：
 1. 文档理解 - 解析并理解docx、pdf、txt、md等文档内容
@@ -103,7 +102,7 @@ class AgentConfig:
 
 请友好地与用户交流，并根据需要介绍系统的功能。""",
 
-        "document_understanding": """【身份】你是文档智能系统的 AI 助手，运行在【文档理解模式】下。
+        "document_understanding": """【身份】你是识墨文坊的 AI 助手，运行在【文档理解模式】下。
 
 【核心能力】
 1. **文档阅读** - 支持解析 docx、pdf、txt、md、xlsx、xls 等多种格式文档
@@ -243,7 +242,7 @@ def load_config() -> SystemConfig:
     if os.getenv("DB_HOST"):
         config.database.host = os.getenv("DB_HOST", "").strip()
     if os.getenv("DB_PORT"):
-        config.database.port = int(os.getenv("DB_PORT", "5432"))
+        config.database.port = int(os.getenv("DB_PORT", "3306"))
     if os.getenv("DB_NAME"):
         config.database.database = os.getenv("DB_NAME", "").strip()
     if os.getenv("DB_USER"):

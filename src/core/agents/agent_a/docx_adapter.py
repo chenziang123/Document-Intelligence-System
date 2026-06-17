@@ -370,36 +370,63 @@ class DocxAdapter:
         }
 
     def _apply_replace_text(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-        find_text = str(params.get("find", ""))
+        find_text = str(params.get("find", "")).strip()
         replace_text = str(params.get("replace", ""))
+        match_case = bool(params.get("match_case", False))
         if not find_text:
-            return {"replaced": 0}
+            return {"replaced": 0, "reason": "未指定要查找的文本"}
 
         replaced = 0
         for paragraph in self.document.paragraphs:
-            if self._replace_text_in_paragraph_runs(paragraph, find_text, replace_text):
+            if self._replace_text_in_paragraph_runs(paragraph, find_text, replace_text, match_case=match_case):
                 replaced += 1
 
         for table in self.document.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        if self._replace_text_in_paragraph_runs(paragraph, find_text, replace_text):
+                        if self._replace_text_in_paragraph_runs(paragraph, find_text, replace_text, match_case=match_case):
                             replaced += 1
 
         return {"find": find_text, "replace": replace_text, "replaced": replaced}
 
     @staticmethod
-    def _replace_text_in_paragraph_runs(paragraph, find_text: str, replace_text: str) -> bool:
+    def _replace_text_in_paragraph_runs(
+        paragraph,
+        find_text: str,
+        replace_text: str,
+        match_case: bool = False,
+    ) -> bool:
         text = paragraph.text or ""
-        if find_text not in text:
+        if not text:
+            return False
+
+        if match_case:
+            if find_text not in text:
+                return False
+            new_text = text.replace(find_text, replace_text)
+        else:
+            pattern = re.compile(re.escape(find_text), flags=re.IGNORECASE)
+            if not pattern.search(text):
+                return False
+            new_text = pattern.sub(replace_text, text)
+
+        if new_text == text:
             return False
 
         # 优先在 run 内替换，尽量保留既有粗体/颜色等样式。
         run_changed = False
         for run in paragraph.runs:
-            if find_text in (run.text or ""):
-                run.text = (run.text or "").replace(find_text, replace_text)
+            run_text = run.text or ""
+            if match_case:
+                hit = find_text in run_text
+                updated = run_text.replace(find_text, replace_text) if hit else run_text
+            else:
+                run_pattern = re.compile(re.escape(find_text), flags=re.IGNORECASE)
+                hit = bool(run_pattern.search(run_text))
+                updated = run_pattern.sub(replace_text, run_text) if hit else run_text
+            if hit:
+                run.text = updated
                 run_changed = True
 
         if run_changed:
@@ -412,7 +439,7 @@ class DocxAdapter:
         keep_size = first_run.font.size if first_run is not None else None
         keep_color = first_run.font.color.rgb if first_run is not None else None
 
-        paragraph.text = text.replace(find_text, replace_text)
+        paragraph.text = new_text
         if paragraph.runs:
             run = paragraph.runs[0]
             if keep_bold is not None:

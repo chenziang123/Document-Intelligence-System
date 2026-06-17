@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from psycopg.rows import dict_row
+from db.mysql_compat import dict_row
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured
@@ -31,8 +31,16 @@ def is_db_enabled(config: Optional[SystemConfig] = None) -> bool:
     return cfg.database.enabled and is_database_configured(cfg)
 
 
+def _create_index_if_missing(cur, sql: str) -> None:
+    try:
+        cur.execute(sql)
+    except Exception as exc:
+        if "duplicate key name" not in str(exc).lower():
+            raise
+
+
 def _ensure_workflow_tables(conn) -> None:
-    """确保工作流相关表存在。"""
+    """确保工作流相关表存在（迁移脚本已建表时仅跳过重复索引）。"""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -41,19 +49,15 @@ def _ensure_workflow_tables(conn) -> None:
                 name         VARCHAR(255) NOT NULL DEFAULT '未命名',
                 icon         VARCHAR(32)  NOT NULL DEFAULT '🔧',
                 type         VARCHAR(16)  NOT NULL DEFAULT 'custom',
-                nodes        JSONB        NOT NULL DEFAULT '[]',
-                config       JSONB        NOT NULL DEFAULT '{}',
-                created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-                updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-            )
+                nodes        JSON         NOT NULL,
+                config       JSON         NOT NULL,
+                created_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                updated_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_workflows_updated ON user_workflows(updated_at DESC)"
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_workflows_type ON user_workflows(type)"
-        )
+        _create_index_if_missing(cur, "CREATE INDEX idx_user_workflows_updated ON user_workflows(updated_at DESC)")
+        _create_index_if_missing(cur, "CREATE INDEX idx_user_workflows_type ON user_workflows(type)")
 
         cur.execute(
             """
@@ -64,24 +68,17 @@ def _ensure_workflow_tables(conn) -> None:
                 progress            INT         NOT NULL DEFAULT 0,
                 current_file_index  INT         NOT NULL DEFAULT 0,
                 total_files         INT         NOT NULL DEFAULT 0,
-                current_file_name   TEXT        NOT NULL DEFAULT '',
-                logs                JSONB       NOT NULL DEFAULT '[]',
-                output_files        JSONB       NOT NULL DEFAULT '[]',
+                current_file_name   TEXT        NOT NULL,
+                logs                JSON        NOT NULL,
+                output_files        JSON        NOT NULL,
                 error               TEXT,
-                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
+                created_at          DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                updated_at          DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_workflow_exec_updated ON workflow_executions(updated_at DESC)"
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_workflow_exec_status ON workflow_executions(status)"
-        )
-        cur.execute(
-            "ALTER TABLE workflow_executions ADD COLUMN IF NOT EXISTS error_code VARCHAR(64)"
-        )
+        _create_index_if_missing(cur, "CREATE INDEX idx_workflow_exec_updated ON workflow_executions(updated_at DESC)")
+        _create_index_if_missing(cur, "CREATE INDEX idx_workflow_exec_status ON workflow_executions(status)")
 
 
 # ---------------------------------------------------------------------------
@@ -242,15 +239,16 @@ def db_delete_workflow(workflow_id: str, config: Optional[SystemConfig] = None) 
     try:
         with db_connection(cfg) as conn:
             _ensure_workflow_tables(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM user_workflows WHERE workflow_id = %s AND type = 'custom'",
-                    (workflow_id,),
-                )
-                deleted = cur.rowcount > 0
-                if deleted:
-                    logger.info(f"[workflow_repo] 工作流已删除: {workflow_id}")
-                return deleted
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM user_workflows WHERE workflow_id = %s AND type = 'custom'",
+                        (workflow_id,),
+                    )
+                    deleted = cur.rowcount > 0
+            if deleted:
+                logger.info(f"[workflow_repo] 工作流已删除: {workflow_id}")
+            return deleted
     except Exception as e:
         logger.error(f"[workflow_repo] db_delete_workflow({workflow_id}) error: {e}")
         return False

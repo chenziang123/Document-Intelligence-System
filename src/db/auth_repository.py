@@ -5,8 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from psycopg.rows import dict_row
-from psycopg.types.json import Json
+from db.mysql_compat import Json, dict_row
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured
@@ -53,16 +52,17 @@ def create_user(
     if not cfg.database.enabled or not is_database_configured(cfg):
         raise RuntimeError("数据库未启用，无法创建用户")
     now = _utc_now()
+    user_id = str(uuid.uuid4())
     with db_connection(cfg) as conn:
         with conn.transaction():
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    INSERT INTO users (phone, password_hash, display_name, status, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'active', %s, %s)
+                    INSERT INTO users (id, phone, password_hash, display_name, status, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, 'active', %s, %s)
                     RETURNING id, phone, password_hash, display_name, status, created_at, updated_at, last_login_at
                     """,
-                    (phone, password_hash, display_name, now, now),
+                    (user_id, phone, password_hash, display_name, now, now),
                 )
                 return _row_to_user(cur.fetchone())
 
@@ -103,6 +103,32 @@ def get_user_by_phone(phone: str, config: Optional[SystemConfig] = None) -> Opti
             return _row_to_user(row) if row else None
 
 
+def update_user_display_name(
+    user_id: str,
+    display_name: str,
+    config: Optional[SystemConfig] = None,
+) -> Optional[UserRow]:
+    cfg = config or get_config()
+    if not cfg.database.enabled or not is_database_configured(cfg):
+        return None
+    now = _utc_now()
+    with db_connection(cfg) as conn:
+        with conn.transaction():
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET display_name = %s,
+                        updated_at = %s
+                    WHERE id = %s::uuid
+                    RETURNING id, phone, password_hash, display_name, status, created_at, updated_at, last_login_at
+                    """,
+                    (display_name, now, user_id),
+                )
+                row = cur.fetchone()
+                return _row_to_user(row) if row else None
+
+
 def update_user_last_login(user_id: str, config: Optional[SystemConfig] = None) -> None:
     cfg = config or get_config()
     if not cfg.database.enabled or not is_database_configured(cfg):
@@ -134,23 +160,27 @@ def create_auth_session(
     if not cfg.database.enabled or not is_database_configured(cfg):
         raise RuntimeError("数据库未启用，无法创建登录会话")
     now = _utc_now()
+    session_id = str(uuid.uuid4())
     with db_connection(cfg) as conn:
         with conn.transaction():
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
                     INSERT INTO auth_sessions (
-                        user_id, token_hash, expires_at, user_agent, ip_address, created_at, updated_at, last_used_at
+                        id, user_id, token_hash, expires_at, user_agent, ip_address, metadata,
+                        created_at, updated_at, last_used_at
                     )
-                    VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, user_id, token_hash, expires_at, revoked_at, created_at, last_used_at
                     """,
                     (
+                        session_id,
                         user_id,
                         token_hash(access_token),
                         expires_at,
                         user_agent,
                         ip_address,
+                        Json({}),
                         now,
                         now,
                         now,

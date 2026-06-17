@@ -21,6 +21,7 @@ function clearSearch() {
     <div class="library-toolbar">
       <div class="library-title">
         <span>文档库管理</span>
+        <span class="library-title-sub">个人空间 · 文档检索与管理</span>
       </div>
       <div class="library-actions">
         <!-- 搜索框 -->
@@ -60,35 +61,42 @@ function clearSearch() {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
+  background: var(--background);
 }
 
-/* Toolbar */
 .library-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 32px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
+  gap: 16px;
+  padding: 16px 28px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .library-title {
+  font-family: var(--font-heading);
   font-size: 20px;
   font-weight: 700;
+  color: var(--foreground);
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.library-title-sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted-foreground);
 }
 
 .library-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-/* Search Box */
 .search-box {
   position: relative;
   display: flex;
@@ -101,31 +109,31 @@ function clearSearch() {
   top: 50%;
   transform: translateY(-50%);
   display: flex;
-  color: var(--text-muted);
+  color: var(--muted-foreground);
   pointer-events: none;
 }
 
 .search-input {
-  padding: 9px 36px 9px 36px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  padding: 8px 36px;
+  background: var(--card);
+  border: 1px solid var(--input);
   border-radius: var(--radius-md);
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--foreground);
   outline: none;
-  width: 220px;
-  transition: all 0.2s;
+  width: 256px;
+  height: 36px;
+  transition: border-color 0.2s, box-shadow 0.2s;
   font-family: inherit;
 }
 
 .search-input::placeholder {
-  color: var(--text-muted);
+  color: var(--muted-foreground);
 }
 
 .search-input:focus {
-  border-color: var(--accent-primary);
-  width: 280px;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px oklch(0.52 0.16 255 / 0.12);
 }
 
 .search-clear {
@@ -134,56 +142,21 @@ function clearSearch() {
   background: transparent;
   border: none;
   cursor: pointer;
-  color: var(--text-muted);
+  color: var(--muted-foreground);
   font-size: 16px;
   width: 20px;
   height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0;
-  transition: all 0.2s;
+  border-radius: var(--radius-sm);
 }
 
 .search-clear:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--secondary);
+  color: var(--foreground);
 }
 
-/* Action Buttons */
-.lib-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: inherit;
-}
-
-.lib-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-color-hover);
-}
-
-.lib-btn.primary {
-  background: var(--gradient-primary);
-  border: none;
-  color: white;
-}
-
-.lib-btn.primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
-}
-
-/* Body */
 .library-body {
   flex: 1;
   display: flex;

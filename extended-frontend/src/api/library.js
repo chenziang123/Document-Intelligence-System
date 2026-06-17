@@ -37,6 +37,11 @@ export default {
     return client.post(`/library/spaces/${spaceId}/docs`, formData)
   },
 
+  /** 重命名文档 */
+  renameDoc(docId, fileName) {
+    return client.put(`/library/docs/${docId}`, { file_name: fileName })
+  },
+
   /** 删除单个文档 */
   deleteDoc(docId) {
     return client.delete(`/library/docs/${docId}`)

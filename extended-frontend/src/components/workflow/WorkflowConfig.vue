@@ -87,10 +87,49 @@ function getMultiFieldValues(field, node) {
   return raw.map(v => normalizeFieldValue(v))
 }
 
+function getNodeMultiFieldValues(field, node) {
+  const raw = getFieldValue(field, node)
+  return Array.isArray(raw) ? raw.map(String) : []
+}
+
+function toggleNodeMulti(fieldKey, targetNodeId, checked) {
+  const nodeId = workflowStore.selectedNodeId
+  if (!nodeId) return
+  const cfg = workflowStore.selectedNode?.configValues
+  const current = Array.isArray(cfg?.[fieldKey]) ? [...cfg[fieldKey]] : []
+  if (checked) {
+    if (!current.includes(targetNodeId)) current.push(targetNodeId)
+  } else {
+    const idx = current.indexOf(targetNodeId)
+    if (idx > -1) current.splice(idx, 1)
+  }
+  updateConfig(fieldKey, current)
+}
+
+/** 循环节点可引用的处理节点 */
+const selectableProcessNodes = computed(() => {
+  const excludeId = workflowStore.selectedNodeId
+  return workflowStore.canvasNodes.filter(
+    n => n.id !== excludeId && n.type !== 'input' && n.type !== 'output' && n.type !== 'control'
+  )
+})
+
+/** 分叉网关可选择的汇合节点 */
+const selectableJoinNodes = computed(() => {
+  const excludeId = workflowStore.selectedNodeId
+  return workflowStore.canvasNodes.filter(
+    n => n.id !== excludeId && n.schemaKey === 'schema-join'
+  )
+})
+
+function selectSingleNodeField(fieldKey, targetNodeId) {
+  updateConfig(fieldKey, targetNodeId || '')
+}
+
 // ==================== Schema 获取 ====================
 function getNodeSchema(node) {
   if (!node) return null
-  return node.schema || workflowStore.nodeSchemas[node.schemaKey] || null
+  return node.schema || workflowStore.getSchemaByKey(node.schemaKey) || null
 }
 
 function getFieldUnsupportedHint(field) {
@@ -125,6 +164,12 @@ async function handleCreateNewSpace() {
 // 切换输入来源
 function handleInputSourceChange(value) {
   updateConfig('inputSource', value)
+  if (value === 'local') {
+    updateConfig('spaceId', null)
+    workflowStore.clearSelectedDocs()
+  } else {
+    workflowStore.clearLocalFiles()
+  }
 }
 
 // 下载输出文件
@@ -269,6 +314,20 @@ const currentSpaceId = computed(() => {
   return getFieldValue({ key: 'spaceId' }, node) || null
 })
 
+const inputDocCount = computed(() => {
+  if (currentInputSource.value === 'local') {
+    return displayedLocalFiles.value.length
+  }
+  return displayedDocs.value.length
+})
+
+const isInputNode = computed(() => workflowStore.selectedNode?.type === 'input')
+const isOutputNode = computed(() => workflowStore.selectedNode?.type === 'output')
+
+const hasSelectedInputSummary = computed(() =>
+  displayedDocs.value.length > 0 || displayedLocalFiles.value.length > 0
+)
+
 const currentOutputMode = computed(() => {
   const node = workflowStore.selectedNode
   if (!node) return 'download'
@@ -308,11 +367,38 @@ function isFieldVisible(field, node) {
     if (dep.arrayIncludes != null) {
       const arr = Array.isArray(val) ? val : val != null ? [val] : []
       if (!arr.includes(dep.arrayIncludes)) return false
+    } else if (dep.values !== undefined && Array.isArray(dep.values)) {
+      if (!dep.values.includes(val)) return false
     } else if (dep.value !== undefined && val !== dep.value) {
       return false
     }
   }
   return true
+}
+
+/** 根据 dynamicBy 字段解析标签、占位符、说明（用于分割参数等联动文案） */
+function getFieldDynamicKey(field, node) {
+  const by = field.dynamicBy
+  if (!by || !node) return null
+  return getFieldValue({ key: by }, node)
+}
+
+function getFieldLabel(field, node) {
+  const key = getFieldDynamicKey(field, node)
+  if (key != null && field.labelMap?.[key]) return field.labelMap[key]
+  return field.label || ''
+}
+
+function getFieldPlaceholder(field, node) {
+  const key = getFieldDynamicKey(field, node)
+  if (key != null && field.placeholderMap?.[key]) return field.placeholderMap[key]
+  return field.placeholder || ''
+}
+
+function getFieldHint(field, node) {
+  const key = getFieldDynamicKey(field, node)
+  if (key != null && field.hintMap?.[key]) return field.hintMap[key]
+  return field.hint || ''
 }
 
 const filteredFields = computed(() => {
@@ -449,23 +535,40 @@ function nodeStatusText(status) {
 
         <div class="config-group">
           <div class="config-group-label">运行设置</div>
+          <p class="run-settings-hint">
+            多文件批量处理已支持。并发数量大于 1 时将并行处理多个文件；设为 1 则逐个串行处理。
+          </p>
           <div class="field">
             <label class="field-label">并发数量</label>
-            <div class="field-badge field-badge-warning">暂不支持</div>
             <div class="range-row">
-              <input type="range" min="1" max="10" value="3" class="range-input" />
-              <span class="range-val">3 个文档/批</span>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                class="range-input"
+                :value="workflowStore.runSettings.concurrentLimit"
+                @input="workflowStore.updateRunSettings('concurrentLimit', Number($event.target.value))"
+              />
+              <span class="range-val">{{ workflowStore.runSettings.concurrentLimit }} 个文档/批</span>
             </div>
           </div>
           <div class="field field-toggle-row">
             <label class="field-label">出错时继续</label>
-            <div class="field-badge field-badge-warning">暂不支持</div>
-            <div class="toggle-switch on"></div>
+            <p class="field-desc">关闭后，任一批次中有文件失败将停止后续处理。</p>
+            <div
+              class="toggle-switch"
+              :class="{ on: workflowStore.runSettings.continueOnError }"
+              @click="workflowStore.updateRunSettings('continueOnError', !workflowStore.runSettings.continueOnError)"
+            ></div>
           </div>
           <div class="field field-toggle-row">
             <label class="field-label">出错通知</label>
-            <div class="field-badge field-badge-warning">暂不支持</div>
-            <div class="toggle-switch on"></div>
+            <p class="field-desc">开启后，文件处理失败时会在执行日志中突出提示。</p>
+            <div
+              class="toggle-switch"
+              :class="{ on: workflowStore.runSettings.notifyOnError }"
+              @click="workflowStore.updateRunSettings('notifyOnError', !workflowStore.runSettings.notifyOnError)"
+            ></div>
           </div>
         </div>
 
@@ -494,6 +597,7 @@ function nodeStatusText(status) {
             <div
               class="step-dot"
               :class="{
+                ['type-' + node.type]: true,
                 'step-done': i < workflowStore.canvasNodes.findIndex(n => n.id === workflowStore.selectedNodeId),
                 'step-active': workflowStore.selectedNodeId === node.id
               }"
@@ -508,6 +612,7 @@ function nodeStatusText(status) {
           <div>
             <div class="node-config-title">{{ workflowStore.selectedNode.title }}</div>
             <div class="node-config-subtitle">{{ getNodeSchema(workflowStore.selectedNode)?.subtitle }}</div>
+            <p v-if="workflowStore.selectedNode.body" class="node-config-desc">{{ workflowStore.selectedNode.body }}</p>
           </div>
         </div>
 
@@ -515,7 +620,7 @@ function nodeStatusText(status) {
         <div v-if="workflowStore.canvasNodes.length > 1" class="config-group step-order-group">
           <div class="config-group-label">执行顺序</div>
           <p class="step-order-hint">
-            画布拖拽仅调整布局；「前移 / 后移」会与相邻卡片互换画布位置，使连线与执行顺序一致。
+            平时可自由拖拽摆放节点。需快速调整执行顺序时，点击画布上方「编辑顺序」，拖拽后松手即可；画布太乱可点「自动对齐」整理。
           </p>
           <div class="step-order-row">
             <button
@@ -536,9 +641,146 @@ function nodeStatusText(status) {
           </div>
         </div>
 
+        <!-- ===== 输入文件（仅输入节点，来源与选文件合一） ===== -->
+        <div v-if="isInputNode" class="config-group doc-input-group">
+          <div class="config-group-label">
+            输入文件
+            <span class="doc-count-badge">{{ inputDocCount }} 个</span>
+          </div>
+
+          <div class="doc-input-card">
+            <div class="source-tabs doc-source-tabs">
+              <button
+                type="button"
+                class="source-tab"
+                :class="{ active: currentInputSource === 'library' }"
+                @click="handleInputSourceChange('library')"
+              >从文档库选择</button>
+              <button
+                type="button"
+                class="source-tab"
+                :class="{ active: currentInputSource === 'local' }"
+                @click="handleInputSourceChange('local')"
+              >本地上传</button>
+            </div>
+
+            <div v-if="currentInputSource === 'library'" class="doc-panel">
+              <div class="doc-panel-field">
+                <label class="field-label">文档库</label>
+                <select
+                  class="config-select"
+                  :value="currentSpaceId || ''"
+                  @change="handleSpaceChange($event.target.value)"
+                >
+                  <option value="">请选择文档库</option>
+                  <option
+                    v-for="space in libraryStore.spaces"
+                    :key="space.id"
+                    :value="space.id"
+                  >{{ space.name }}</option>
+                </select>
+              </div>
+
+              <div v-if="isLoadingLibrary" class="doc-loading">
+                <span class="loading-dots-sm"><span></span><span></span><span></span></span> 加载文档...
+              </div>
+              <div v-else-if="!currentSpaceId" class="doc-empty-hint">
+                请先选择文档库，再勾选要处理的文件
+              </div>
+              <div v-else-if="libraryStore.currentDocs.length === 0" class="doc-empty-hint">
+                该文档库暂无文档，请先在文档库页面上传
+              </div>
+              <div v-else class="doc-list">
+                <div
+                  v-for="doc in libraryStore.currentDocs"
+                  :key="doc.id"
+                  class="doc-list-item"
+                  :class="{ selected: workflowStore.selectedDocs.find(d => d.id === doc.id) }"
+                  @click="handleDocToggle(doc.id)"
+                >
+                  <div class="doc-list-check">
+                    <span v-if="workflowStore.selectedDocs.find(d => d.id === doc.id)" class="check-mark" />
+                  </div>
+                  <span class="doc-list-icon" aria-hidden="true" />
+                  <span class="doc-list-name">{{ doc.name }}</span>
+                  <span class="doc-list-size">{{ doc.size }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="doc-panel">
+              <div
+                class="upload-zone"
+                @click="fileInputRef?.click()"
+                @drop="handleDrop"
+                @dragover="handleDragOver"
+              >
+                <input
+                  ref="fileInputRef"
+                  type="file"
+                  accept=".pdf,.md,.docx,.doc,.xlsx,.txt"
+                  multiple
+                  style="display:none"
+                  @change="handleFileSelect"
+                />
+                <div class="upload-zone-icon" aria-hidden="true" />
+                <div class="upload-zone-text">点击或拖拽文件到此处</div>
+                <div class="upload-zone-hint">支持 PDF、Markdown、Word、Excel、TXT</div>
+              </div>
+
+              <div v-if="displayedLocalFiles.length > 0" class="local-files-list">
+                <div
+                  v-for="file in displayedLocalFiles"
+                  :key="file.id"
+                  class="local-file-item"
+                >
+                  <span class="local-file-icon" aria-hidden="true" />
+                  <span class="local-file-name">{{ file.name }}</span>
+                  <span class="local-file-size">{{ _formatSize(file.size) }}</span>
+                  <button
+                    type="button"
+                    class="local-file-remove"
+                    @click="workflowStore.removeLocalFile(file.id)"
+                  >×</button>
+                </div>
+              </div>
+              <div v-else class="doc-empty-hint doc-empty-inline">
+                尚未添加文件
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已选文档（输出节点：置于输出配置上方，避免挤占按钮邻近区域） -->
+        <div v-if="isOutputNode && hasSelectedInputSummary" class="config-group">
+          <div class="config-group-label">
+            已选文档 <span class="doc-count-badge">{{ displayedDocs.length + displayedLocalFiles.length }} 个</span>
+          </div>
+          <div class="selected-docs-list">
+            <div
+              v-for="doc in displayedDocs"
+              :key="doc.id"
+              class="selected-doc-item"
+            >
+              <span class="selected-doc-icon" aria-hidden="true" />
+              <span class="selected-doc-name">{{ doc.name }}</span>
+              <span class="selected-doc-size">{{ doc.size }}</span>
+            </div>
+            <div
+              v-for="file in displayedLocalFiles"
+              :key="file.id"
+              class="selected-doc-item"
+            >
+              <span class="selected-doc-icon" aria-hidden="true" />
+              <span class="selected-doc-name">{{ file.name }}</span>
+              <span class="selected-doc-size">{{ _formatSize(file.size) }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Fields -->
-        <div class="config-group">
-          <div class="config-group-label">参数配置</div>
+        <div v-if="filteredFields.length > 0" class="config-group" :class="{ 'output-config-group': isOutputNode }">
+          <div class="config-group-label">{{ isOutputNode ? '输出文件' : '参数配置' }}</div>
 
           <template v-for="(field, fIdx) in filteredFields" :key="field.key || ('static-' + fIdx)">
 
@@ -657,11 +899,13 @@ function nodeStatusText(status) {
 
             <!-- ===== Input ===== -->
             <div v-else-if="field.type === 'input'" class="field">
-              <label class="field-label">{{ field.label }}</label>
+              <label class="field-label">{{ getFieldLabel(field, workflowStore.selectedNode) }}</label>
+              <p v-if="getFieldHint(field, workflowStore.selectedNode)" class="field-hint-text">{{ getFieldHint(field, workflowStore.selectedNode) }}</p>
               <div v-if="getFieldUnsupportedHint(field)" class="field-badge field-badge-warning">{{ getFieldUnsupportedHint(field) }}</div>
               <input
                 class="config-input"
                 type="text"
+                :placeholder="getFieldPlaceholder(field, workflowStore.selectedNode)"
                 :value="getFieldValue(field, workflowStore.selectedNode)"
                 @input="updateConfig(field.key, $event.target.value)"
                 :disabled="Boolean(getFieldUnsupportedHint(field))"
@@ -670,10 +914,12 @@ function nodeStatusText(status) {
 
             <!-- ===== Textarea ===== -->
             <div v-else-if="field.type === 'textarea'" class="field">
-              <label class="field-label">{{ field.label }}</label>
+              <label class="field-label">{{ getFieldLabel(field, workflowStore.selectedNode) }}</label>
+              <p v-if="getFieldHint(field, workflowStore.selectedNode)" class="field-hint-text">{{ getFieldHint(field, workflowStore.selectedNode) }}</p>
               <div v-if="getFieldUnsupportedHint(field)" class="field-badge field-badge-warning">{{ getFieldUnsupportedHint(field) }}</div>
               <textarea
                 class="config-textarea"
+                :placeholder="getFieldPlaceholder(field, workflowStore.selectedNode)"
                 :value="getFieldValue(field, workflowStore.selectedNode)"
                 @input="updateConfig(field.key, $event.target.value)"
                 :disabled="Boolean(getFieldUnsupportedHint(field))"
@@ -700,13 +946,63 @@ function nodeStatusText(status) {
 
             <!-- ===== Toggle ===== -->
             <div v-else-if="field.type === 'toggle'" class="field field-toggle-row">
-              <label class="field-label">{{ field.label }}</label>
+              <div class="field-toggle-copy">
+                <label class="field-label">{{ field.label }}</label>
+                <p v-if="getFieldHint(field, workflowStore.selectedNode)" class="field-hint-text">{{ getFieldHint(field, workflowStore.selectedNode) }}</p>
+              </div>
               <div v-if="getFieldUnsupportedHint(field)" class="field-badge field-badge-warning">{{ getFieldUnsupportedHint(field) }}</div>
               <div
                 class="toggle-switch"
                 :class="{ on: getFieldValue(field, workflowStore.selectedNode) }"
                 @click="!getFieldUnsupportedHint(field) && (updateConfig(field.key, !getFieldValue(field, workflowStore.selectedNode)), $event.target.classList.toggle('on'))"
               ></div>
+            </div>
+
+            <!-- ===== 画布节点多选（循环体） ===== -->
+            <div v-else-if="field.type === 'node-multiselect'" class="field">
+              <label class="field-label">{{ field.label }}</label>
+              <p v-if="getFieldHint(field, workflowStore.selectedNode)" class="field-hint-text">{{ getFieldHint(field, workflowStore.selectedNode) }}</p>
+              <div v-if="selectableProcessNodes.length === 0" class="node-multiselect-empty">画布上暂无可选的处理节点</div>
+              <div v-else class="node-multiselect-list">
+                <label
+                  v-for="pn in selectableProcessNodes"
+                  :key="pn.id"
+                  class="node-multiselect-item"
+                  :class="{ active: getNodeMultiFieldValues(field, workflowStore.selectedNode).includes(pn.id) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="getNodeMultiFieldValues(field, workflowStore.selectedNode).includes(pn.id)"
+                    @change="toggleNodeMulti(field.key, pn.id, $event.target.checked)"
+                  />
+                  <span class="node-multiselect-title">{{ pn.title }}</span>
+                  <span class="node-multiselect-id">{{ pn.id }}</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- ===== 画布节点单选（汇合节点等） ===== -->
+            <div v-else-if="field.type === 'node-select'" class="field">
+              <label class="field-label">{{ field.label }}</label>
+              <p v-if="getFieldHint(field, workflowStore.selectedNode)" class="field-hint-text">{{ getFieldHint(field, workflowStore.selectedNode) }}</p>
+              <div v-if="selectableJoinNodes.length === 0" class="node-multiselect-empty">画布上暂无汇合网关节点</div>
+              <div v-else class="node-multiselect-list">
+                <label
+                  v-for="pn in selectableJoinNodes"
+                  :key="pn.id"
+                  class="node-multiselect-item"
+                  :class="{ active: getFieldValue(field, workflowStore.selectedNode) === pn.id }"
+                >
+                  <input
+                    type="radio"
+                    :name="'node-select-' + field.key"
+                    :checked="getFieldValue(field, workflowStore.selectedNode) === pn.id"
+                    @change="selectSingleNodeField(field.key, pn.id)"
+                  />
+                  <span class="node-multiselect-title">{{ pn.title }}</span>
+                  <span class="node-multiselect-id">{{ pn.id }}</span>
+                </label>
+              </div>
             </div>
 
             <!-- ===== Multi-select tags ===== -->
@@ -727,100 +1023,8 @@ function nodeStatusText(status) {
           </template>
         </div>
 
-        <!-- ===== 文档选择区域（仅输入节点显示） ===== -->
-        <div v-if="workflowStore.selectedNode.type === 'input'" class="config-group">
-          <div class="config-group-label">
-            待处理文档
-            <span class="doc-count-badge">
-              {{ displayedDocs.length + displayedLocalFiles.length }} 个
-            </span>
-          </div>
-
-          <!-- 来源标签 -->
-          <div class="source-tabs" style="margin-bottom: 12px;">
-            <button
-              class="source-tab"
-              :class="{ active: currentInputSource === 'library' }"
-              @click="handleInputSourceChange('library')"
-            >从文档库</button>
-            <button
-              class="source-tab"
-              :class="{ active: currentInputSource === 'local' }"
-              @click="handleInputSourceChange('local')"
-            >本地上传</button>
-          </div>
-
-          <!-- 文档库文档列表 -->
-          <div v-if="currentInputSource === 'library'" class="doc-library-section">
-            <div v-if="isLoadingLibrary" class="doc-loading">
-              <span class="loading-dots-sm"><span></span><span></span><span></span></span> 加载文档...
-            </div>
-            <div v-else-if="!currentSpaceId" class="doc-empty-hint">
-              请先在「参数配置」中选择一个文档库
-            </div>
-            <div v-else-if="libraryStore.currentDocs.length === 0" class="doc-empty-hint">
-              该文档库暂无文档
-            </div>
-            <div v-else class="doc-list">
-              <div
-                v-for="doc in libraryStore.currentDocs"
-                :key="doc.id"
-                class="doc-list-item"
-                :class="{ selected: workflowStore.selectedDocs.find(d => d.id === doc.id) }"
-                @click="handleDocToggle(doc.id)"
-              >
-                <div class="doc-list-check">
-                  <span v-if="workflowStore.selectedDocs.find(d => d.id === doc.id)" class="check-mark" />
-                </div>
-                <span class="doc-list-icon" aria-hidden="true" />
-                <span class="doc-list-name">{{ doc.name }}</span>
-                <span class="doc-list-size">{{ doc.size }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 本地上传区域 -->
-          <div v-else class="doc-local-section">
-            <div
-              class="upload-zone"
-              @click="fileInputRef?.click()"
-              @drop="handleDrop"
-              @dragover="handleDragOver"
-            >
-              <input
-                ref="fileInputRef"
-                type="file"
-                accept=".pdf,.md,.docx,.doc,.xlsx,.txt"
-                multiple
-                style="display:none"
-                @change="handleFileSelect"
-              />
-              <div class="upload-zone-icon" aria-hidden="true" />
-              <div class="upload-zone-text">点击或拖拽文件到此处</div>
-              <div class="upload-zone-hint">支持 PDF、Markdown、Word、Excel、TXT</div>
-            </div>
-
-            <!-- 已选本地文件 -->
-            <div v-if="displayedLocalFiles.length > 0" class="local-files-list">
-              <div
-                v-for="file in displayedLocalFiles"
-                :key="file.id"
-                class="local-file-item"
-              >
-                <span class="local-file-icon" aria-hidden="true" />
-                <span class="local-file-name">{{ file.name }}</span>
-                <span class="local-file-size">{{ _formatSize(file.size) }}</span>
-                <button
-                  class="local-file-remove"
-                  @click="workflowStore.removeLocalFile(file.id)"
-                >×</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Selected Docs Summary (for non-input nodes) -->
-        <div v-if="workflowStore.selectedNode.type !== 'input' && (displayedDocs.length > 0 || displayedLocalFiles.length > 0)" class="config-group">
+        <!-- Selected Docs Summary (for non-input, non-output nodes) -->
+        <div v-if="!isOutputNode && workflowStore.selectedNode.type !== 'input' && hasSelectedInputSummary" class="config-group">
           <div class="config-group-label">
             已选文档 <span class="doc-count-badge">{{ displayedDocs.length + displayedLocalFiles.length }} 个</span>
           </div>
@@ -846,6 +1050,20 @@ function nodeStatusText(status) {
           </div>
         </div>
 
+        <!-- Output Files Download（紧贴开始处理按钮上方） -->
+        <div v-if="workflowStore.outputFiles.length > 0 && !workflowStore.isExecuting" class="output-files-section">
+          <div class="output-files-title">处理结果</div>
+          <div
+            v-for="f in workflowStore.outputFiles"
+            :key="f.path"
+            class="output-file-item"
+          >
+            <span class="output-file-name">{{ f.name }}</span>
+            <span class="output-file-size">{{ (f.size / 1024).toFixed(1) }} KB</span>
+            <button class="output-download-btn" @click="downloadFile(f)">下载</button>
+          </div>
+        </div>
+
         <!-- Action Button -->
         <button
           class="config-btn"
@@ -868,7 +1086,10 @@ function nodeStatusText(status) {
               v-for="item in workflowStore.nodeProgress"
               :key="item.id"
               class="node-progress-item"
-              :class="'node-progress-' + item.status"
+              :class="[
+                'node-progress-' + item.status,
+                item.type ? 'node-progress-type-' + item.type : '',
+              ]"
             >
               <div class="node-progress-main">
                 <span class="node-progress-index">{{ item.index }}</span>
@@ -887,20 +1108,6 @@ function nodeStatusText(status) {
               class="exec-log-item"
               :class="'log-' + log.type"
             >{{ log.message }}</div>
-          </div>
-        </div>
-
-        <!-- Output Files Download -->
-        <div v-if="workflowStore.outputFiles.length > 0 && !workflowStore.isExecuting" class="output-files-section">
-          <div class="output-files-title">输出文件</div>
-          <div
-            v-for="f in workflowStore.outputFiles"
-            :key="f.path"
-            class="output-file-item"
-          >
-            <span class="output-file-name">{{ f.name }}</span>
-            <span class="output-file-size">{{ (f.size / 1024).toFixed(1) }} KB</span>
-            <button class="output-download-btn" @click="downloadFile(f)">下载</button>
           </div>
         </div>
       </div>
@@ -967,6 +1174,43 @@ function nodeStatusText(status) {
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
 }
 
+.doc-input-group {
+  margin-bottom: 4px;
+}
+
+.doc-input-card {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.doc-source-tabs {
+  margin: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  padding: 6px;
+}
+
+.doc-panel {
+  padding: 14px;
+}
+
+.doc-panel-field {
+  margin-bottom: 12px;
+}
+
+.doc-panel-field .field-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.doc-empty-inline {
+  padding: 12px 0 4px;
+  text-align: center;
+}
+
 .doc-count-badge {
   font-size: 11px;
   font-weight: 600;
@@ -975,13 +1219,6 @@ function nodeStatusText(status) {
   padding: 2px 8px;
   border-radius: 0;
   margin-left: 8px;
-}
-
-.doc-library-section {
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  overflow: hidden;
 }
 
 .doc-loading {
@@ -1002,7 +1239,7 @@ function nodeStatusText(status) {
 .loading-dots-sm span {
   width: 6px;
   height: 6px;
-  background: var(--accent-purple);
+  background: var(--accent-primary);
   border-radius: 0;
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
@@ -1025,6 +1262,9 @@ function nodeStatusText(status) {
 .doc-list {
   max-height: 220px;
   overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
 }
 
 .doc-list-item {
@@ -1295,6 +1535,18 @@ function nodeStatusText(status) {
   border: 1px solid var(--border-color);
 }
 
+.field-hint-text {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.field-toggle-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .step-order-group {
   margin-bottom: 4px;
 }
@@ -1326,8 +1578,8 @@ function nodeStatusText(status) {
 }
 
 .step-order-btn:hover:not(:disabled) {
-  border-color: var(--accent-purple);
-  color: var(--accent-purple);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .step-order-btn:disabled {
@@ -1354,6 +1606,69 @@ function nodeStatusText(status) {
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.field-badge-info {
+  color: #059669;
+  background: rgba(5, 150, 105, 0.1);
+  border: 1px solid rgba(5, 150, 105, 0.28);
+}
+
+.run-settings-hint,
+.field-desc {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.range-row--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.node-multiselect-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.node-multiselect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.node-multiselect-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.node-multiselect-item:hover,
+.node-multiselect-item.active {
+  border-color: rgba(124, 58, 237, 0.45);
+  background: rgba(124, 58, 237, 0.06);
+}
+
+.node-multiselect-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.node-multiselect-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
 }
 
 .hint-loading {
@@ -1448,6 +1763,38 @@ function nodeStatusText(status) {
   border-radius: var(--radius-sm);
 }
 
+.node-progress-type-input {
+  --np-accent: #eab308;
+  --np-accent-soft: rgba(234, 179, 8, 0.45);
+  --np-accent-bg: rgba(234, 179, 8, 0.16);
+  --np-accent-text: #a16207;
+  border-color: rgba(234, 179, 8, 0.35);
+}
+
+.node-progress-type-ai {
+  --np-accent: #2563eb;
+  --np-accent-soft: rgba(37, 99, 235, 0.55);
+  --np-accent-bg: rgba(37, 99, 235, 0.14);
+  --np-accent-text: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.28);
+}
+
+.node-progress-type-output {
+  --np-accent: #1e40af;
+  --np-accent-soft: rgba(30, 64, 175, 0.55);
+  --np-accent-bg: rgba(30, 64, 175, 0.14);
+  --np-accent-text: #1e3a8a;
+  border-color: rgba(30, 64, 175, 0.28);
+}
+
+.node-progress-type-control {
+  --np-accent: #7c3aed;
+  --np-accent-soft: rgba(124, 58, 237, 0.5);
+  --np-accent-bg: rgba(124, 58, 237, 0.14);
+  --np-accent-text: #6d28d9;
+  border-color: rgba(124, 58, 237, 0.28);
+}
+
 .node-progress-main {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -1495,20 +1842,43 @@ function nodeStatusText(status) {
   height: 100%;
   width: 0;
   border-radius: 0;
-  background: var(--text-muted);
+  background: var(--np-accent-soft, var(--text-muted));
   transition: width 0.35s ease;
+}
+
+.node-progress-type-input .node-progress-index,
+.node-progress-type-ai .node-progress-index,
+.node-progress-type-output .node-progress-index,
+.node-progress-type-control .node-progress-index {
+  background: var(--np-accent-bg);
+  color: var(--np-accent-text);
+}
+
+.node-progress-type-input .node-progress-fill,
+.node-progress-type-ai .node-progress-fill,
+.node-progress-type-output .node-progress-fill,
+.node-progress-type-control .node-progress-fill {
+  background: var(--np-accent-soft);
 }
 
 .node-progress-running .node-progress-index,
 .node-progress-running .node-progress-fill {
-  background: var(--accent-cyan);
-  color: #06202a;
+  background: var(--np-accent, var(--accent-cyan));
+  color: white;
+}
+
+.node-progress-type-input.node-progress-running .node-progress-index {
+  color: #ffffff;
 }
 
 .node-progress-completed .node-progress-index,
 .node-progress-completed .node-progress-fill {
-  background: var(--accent-success);
+  background: var(--np-accent, var(--accent-success));
   color: white;
+}
+
+.node-progress-type-input.node-progress-completed .node-progress-index {
+  color: #ffffff;
 }
 
 .node-progress-failed .node-progress-index,
@@ -1526,9 +1896,14 @@ function nodeStatusText(status) {
 }
 
 .output-files-section {
-  margin-top: 16px;
+  margin-top: 8px;
+  margin-bottom: 12px;
   border-top: 1px solid var(--border-color);
   padding-top: 12px;
+}
+
+.output-config-group {
+  margin-bottom: 8px;
 }
 
 .output-files-title {

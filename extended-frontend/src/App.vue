@@ -41,27 +41,32 @@ function closeBatchModal() {
     <!-- 未登录显示登录界面 -->
     <AuthPanel v-if="!authStore.isAuthenticated && !authStore.isInitializing" />
 
-    <!-- 已登录显示主界面 -->
-    <template v-else-if="authStore.isAuthenticated">
+    <!-- 已登录显示主界面：左侧导航 + 主内容区 -->
+    <div v-else-if="authStore.isAuthenticated" class="app-shell">
       <AppHeader />
 
-      <main class="main-content">
-        <LibraryView v-if="tabStore.currentTab === 'library'" />
-        <!-- keep-alive：避免每次从文档库切回时整页销毁/重建 ChatView（WebSocket 重连 + 全量 Markdown 重算导致卡顿） -->
-        <keep-alive>
-          <ChatView v-if="tabStore.currentTab === 'chat'" />
-        </keep-alive>
-        <WorkflowView
-          v-if="tabStore.currentTab === 'workflow'"
-          @open-batch-modal="openBatchModal"
-        />
-      </main>
+      <div class="app-main">
+        <main class="main-content">
+          <LibraryView v-if="tabStore.currentTab === 'library'" />
+          <!-- keep-alive：避免每次从文档库切回时整页销毁/重建 ChatView（WebSocket 重连 + 全量 Markdown 重算导致卡顿） -->
+          <keep-alive>
+            <ChatView v-if="tabStore.currentTab === 'chat'" />
+          </keep-alive>
+          <!-- keep-alive：切换模块时保留工作流画布与节点配置，避免侧栏重复加载覆盖编辑态 -->
+          <keep-alive>
+            <WorkflowView
+              v-if="tabStore.currentTab === 'workflow'"
+              @open-batch-modal="openBatchModal"
+            />
+          </keep-alive>
+        </main>
 
-      <BatchModal
-        :visible="showBatchModal"
-        @close="closeBatchModal"
-      />
-    </template>
+        <BatchModal
+          :visible="showBatchModal"
+          @close="closeBatchModal"
+        />
+      </div>
+    </div>
 
     <!-- 初始化中显示加载状态 -->
     <div v-else class="loading-screen">

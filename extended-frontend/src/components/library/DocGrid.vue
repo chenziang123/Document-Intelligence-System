@@ -6,6 +6,12 @@ import libraryApi from '../../api/library'
 
 const libraryStore = useLibraryStore()
 
+const hasSelectableDocs = computed(() =>
+  !!libraryStore.currentSpaceId &&
+  !libraryStore.isLoading &&
+  libraryStore.filteredDocs.length > 0
+)
+
 // ==================== 文件选择 ====================
 function handleDocClick(docId, event) {
   libraryStore.toggleDocSelect(docId)
@@ -111,6 +117,50 @@ function closeDeleteDocModal() {
   deleteTargetDoc.value = null
 }
 
+// ==================== 重命名文档 ====================
+const showRenameModal = ref(false)
+const renameTargetDoc = ref(null)
+const renameInput = ref('')
+const isRenaming = ref(false)
+const renameError = ref('')
+
+function openRenameDocModal(doc, event) {
+  event.stopPropagation()
+  renameTargetDoc.value = doc
+  renameInput.value = doc.name
+  renameError.value = ''
+  showRenameModal.value = true
+}
+
+async function confirmRenameDoc() {
+  if (!renameTargetDoc.value) return
+  const newName = renameInput.value.trim()
+  if (!newName) {
+    renameError.value = '请输入文档名称'
+    return
+  }
+  if (newName === renameTargetDoc.value.name) {
+    closeRenameDocModal()
+    return
+  }
+  isRenaming.value = true
+  renameError.value = ''
+  try {
+    await libraryStore.renameDoc(renameTargetDoc.value.id, newName)
+    showRenameModal.value = false
+    renameTargetDoc.value = null
+  } catch (e) {
+    renameError.value = e.message || '重命名失败，请重试'
+  } finally {
+    isRenaming.value = false
+  }
+}
+
+function closeRenameDocModal() {
+  showRenameModal.value = false
+  renameTargetDoc.value = null
+}
+
 // ==================== 批量删除 ====================
 const showBatchDeleteModal = ref(false)
 const isBatchDeleting = ref(false)
@@ -202,10 +252,24 @@ function getFileIcon(extension) {
       <div class="header-right">
         <div class="selected-info" v-if="libraryStore.selectedCount > 0">
           <span>已选择 <strong>{{ libraryStore.selectedCount }}</strong> 个文档</span>
-          <button class="lib-btn danger-sm" @click="openBatchDeleteModal">批量删除</button>
+          <button
+            v-if="hasSelectableDocs && !libraryStore.isAllSelected"
+            class="lib-btn"
+            @click="libraryStore.toggleSelectAll"
+          >
+            全选
+          </button>
           <button class="lib-btn" @click="libraryStore.clearSelection">取消选择</button>
+          <button class="lib-btn danger-sm" @click="openBatchDeleteModal">批量删除</button>
         </div>
         <div v-else-if="libraryStore.currentSpaceId" class="header-actions">
+          <button
+            v-if="hasSelectableDocs"
+            class="lib-btn"
+            @click="libraryStore.toggleSelectAll"
+          >
+            全选
+          </button>
           <button class="lib-btn" @click="triggerUpload">
             <span>导入文档</span>
           </button>
@@ -254,6 +318,15 @@ function getFileIcon(extension) {
           <span v-if="libraryStore.isDocSelected(doc.id)" class="doc-check-visual" aria-hidden="true" />
         </div>
 
+        <!-- Rename Button -->
+        <button
+          class="doc-rename-btn"
+          title="重命名"
+          @click="openRenameDocModal(doc, $event)"
+        >
+          ✎
+        </button>
+
         <!-- Delete Button -->
         <button
           class="doc-delete-btn"
@@ -295,6 +368,44 @@ function getFileIcon(extension) {
       </div>
       <span class="progress-text">正在上传... {{ libraryStore.uploadProgress }}%</span>
     </div>
+
+    <!-- ==================== 重命名文档弹窗 ==================== -->
+    <Teleport to="body">
+      <div class="modal-overlay" :class="{ active: showRenameModal }" @click.self="closeRenameDocModal">
+        <div class="modal">
+          <div class="modal-header">
+            <span class="modal-title">重命名文档</span>
+            <button class="modal-close" @click="closeRenameDocModal">×</button>
+          </div>
+          <div class="modal-body">
+            <div v-if="renameError" class="modal-error">
+              <span class="error-icon" aria-hidden="true">
+                <AlertCircle :size="16" :stroke-width="2" />
+              </span>
+              <span>{{ renameError }}</span>
+            </div>
+            <div class="form-field">
+              <label class="form-label">文档名称</label>
+              <input
+                v-model="renameInput"
+                class="form-input"
+                placeholder="请输入新名称"
+                maxlength="255"
+                @keyup.enter="confirmRenameDoc"
+                @input="renameError = ''"
+              />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="modal-btn cancel" @click="closeRenameDocModal">取消</button>
+            <button class="modal-btn primary" :disabled="isRenaming" @click="confirmRenameDoc">
+              <span v-if="isRenaming" class="btn-spinner"></span>
+              <span v-else>确认</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- ==================== 删除单个文档确认弹窗 ==================== -->
     <Teleport to="body">
@@ -601,7 +712,7 @@ function getFileIcon(extension) {
 .doc-checkbox {
   position: absolute;
   top: 12px;
-  right: 12px;
+  left: 12px;
   width: 22px;
   height: 22px;
   background: var(--bg-tertiary);
@@ -634,6 +745,36 @@ function getFileIcon(extension) {
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
   margin-bottom: 2px;
+}
+
+/* Rename Button */
+.doc-rename-btn {
+  position: absolute;
+  top: 12px;
+  right: 72px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+  opacity: 0;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.doc-card:hover .doc-rename-btn {
+  opacity: 1;
+}
+
+.doc-rename-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
 }
 
 /* Delete Button */
@@ -976,6 +1117,56 @@ function getFileIcon(extension) {
 .modal-btn.danger:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.modal-btn.primary {
+  background: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  color: #fff;
+}
+
+.modal-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-2px);
+}
+
+.modal-btn.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: inherit;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.form-input::placeholder {
+  color: var(--text-muted);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
 }
 
 /* Spinner */

@@ -80,7 +80,7 @@ class CLIInterface:
 
                 # 检查退出命令
                 if user_input.lower() in ["exit", "quit", "q"]:
-                    print("\n感谢使用文档智能系统，再见！")
+                    print("\n感谢使用识墨文坊，再见！")
                     break
 
                 # 处理系统命令（这些命令在所有模式下都可使用）
@@ -180,7 +180,7 @@ class CLIInterface:
         """打印欢迎信息"""
         guide = get_system_guide()
         print("\n" + "=" * 60)
-        print("欢迎使用文档智能系统")
+        print("欢迎使用识墨文坊")
         print("=" * 60)
         print(guide)
         print("\n" + "-" * 60)
