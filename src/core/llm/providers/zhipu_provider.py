@@ -3,6 +3,8 @@ import os
 import langextract as lx
 from openai import OpenAI
 
+from core.llm.llm_service import _llm_http_clients
+
 
 @lx.providers.registry.register(r"^glm", r"^zhipu")
 class ZhipuLanguageModel(lx.inference.BaseLanguageModel):
@@ -13,9 +15,11 @@ class ZhipuLanguageModel(lx.inference.BaseLanguageModel):
         if not self.api_key:
             raise ValueError("ZHIPU_API_KEY not set")
 
+        http_client, _ = _llm_http_clients()
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url="https://open.bigmodel.cn/api/paas/v4/"
+            base_url="https://open.bigmodel.cn/api/paas/v4/",
+            http_client=http_client,
         )
 
     def infer(self, batch_prompts, **kwargs):
